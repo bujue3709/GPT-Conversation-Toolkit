@@ -139,6 +139,11 @@ const virtualJumpState = {
   attempts: 0,
   lastWindowSignature: "",
 };
+const virtualizerCalibrationState = {
+  offset: 0,
+  confidence: 0,
+  updatedAt: 0,
+};
 const folderState = {
   initialized: false,
   loaded: false,

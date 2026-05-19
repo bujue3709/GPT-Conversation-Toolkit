@@ -316,7 +316,6 @@ const finalizeSearchRun = (token, mode, matches) => {
         count: matches.length,
       });
     }
-    highlightCurrentMatch();
     scrollToCurrentMatch();
   } else if (mode === TOOLKIT_MESSAGE_MODE_LOADED && hasPotentialUnloadedMessagesAbove()) {
     updateStatusByKey("status.searchNeedLoadMore", "info");
@@ -448,53 +447,63 @@ const performSearch = async (query) => {
   runBatch();
 };
 
-const scrollToCurrentMatch = () => {
+const scrollToCurrentMatch = async () => {
   if (state.currentMatchIndex < 0 || state.currentMatchIndex >= state.searchMatches.length) {
     return;
   }
 
   const match = state.searchMatches[state.currentMatchIndex];
-  const node =
-    match?.source === "api" && typeof resolveMessageDomNode === "function"
-      ? resolveMessageDomNode(match, { allowWeak: false })
-      : getSearchMatchNode(match);
+
+  clearTextHighlights();
+  clearSearchHighlight();
+
+  if (typeof jumpToConversationMessage === "function") {
+    await jumpToConversationMessage(match, {
+      totalMessages:
+        typeof getReadyConversationIndex === "function"
+          ? getReadyConversationIndex()?.messages?.length
+          : 0,
+      onBeforeJump() {
+        updateStatusByKey("status.searchJumping", "info");
+      },
+      onResolved(resolvedNode) {
+        if (state.searchMatches[state.currentMatchIndex] !== match) {
+          return;
+        }
+        match.node = resolvedNode;
+        resolvedNode.classList.add("chatgpt-toolkit-search-highlight");
+        renderCurrentMatchTextHighlight();
+        updateActiveTextMark();
+        updateStatusByKey("status.searchJumpDone", "success");
+
+        const firstMark = resolvedNode.querySelector(`.${SEARCH_MARK_CLASS}`);
+        const scrollTarget = firstMark || resolvedNode;
+        if (typeof scrollElementIntoConversationView === "function") {
+          scrollElementIntoConversationView(scrollTarget, { behavior: "smooth", block: "center" });
+        } else {
+          scrollTarget.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      },
+      onFailed(reason) {
+        if (state.searchMatches[state.currentMatchIndex] === match) {
+          updateStatusByKey("status.searchJumpFailed", "warn", {
+            reason: reason || "not-rendered",
+          });
+        }
+      },
+    });
+    return;
+  }
+
+  const node = getSearchMatchNode(match);
   if (!(node instanceof HTMLElement)) {
-    if (match?.source === "api" && typeof jumpToConversationMessage === "function") {
-      updateStatusByKey("status.searchJumping", "info");
-      jumpToConversationMessage(match, {
-        totalMessages:
-          typeof getReadyConversationIndex === "function"
-            ? getReadyConversationIndex()?.messages?.length
-            : 0,
-        onResolved: (resolvedNode) => {
-          if (state.searchMatches[state.currentMatchIndex] !== match) {
-            return;
-          }
-          match.node = resolvedNode;
-          clearSearchHighlight();
-          resolvedNode.classList.add("chatgpt-toolkit-search-highlight");
-          renderCurrentMatchTextHighlight();
-          updateActiveTextMark();
-          const firstMark = resolvedNode.querySelector(`.${SEARCH_MARK_CLASS}`);
-          const scrollTarget = firstMark || resolvedNode;
-          if (typeof scrollElementIntoConversationView === "function") {
-            scrollElementIntoConversationView(scrollTarget, { behavior: "smooth", block: "center" });
-          } else {
-            scrollTarget.scrollIntoView({ behavior: "smooth", block: "center" });
-          }
-        },
-        onFailed: () => {
-          if (state.searchMatches[state.currentMatchIndex] === match) {
-            updateStatusByKey("status.searchJumpFailed", "warn");
-          }
-        },
-      });
-      return;
-    }
     updateStatusByKey("status.searchMatchNotLoaded", "info");
     return;
   }
 
+  node.classList.add("chatgpt-toolkit-search-highlight");
+  renderCurrentMatchTextHighlight();
+  updateActiveTextMark();
   const firstMark = node.querySelector(`.${SEARCH_MARK_CLASS}`);
   const scrollTarget = firstMark || node;
   if (typeof scrollElementIntoConversationView === "function") {
@@ -518,7 +527,6 @@ const navigateToPrevMatch = () => {
 
   state.currentMatchIndex =
     (state.currentMatchIndex - 1 + state.searchMatches.length) % state.searchMatches.length;
-  highlightCurrentMatch();
   scrollToCurrentMatch();
   updateSearchUI();
 };
@@ -536,7 +544,6 @@ const navigateToNextMatch = () => {
   }
 
   state.currentMatchIndex = (state.currentMatchIndex + 1) % state.searchMatches.length;
-  highlightCurrentMatch();
   scrollToCurrentMatch();
   updateSearchUI();
 };

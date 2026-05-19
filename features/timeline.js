@@ -129,6 +129,20 @@ const getTimelineSourceBranchIndex = (source, fallbackIndex) => {
   return getTimelineSourceOrder(source, fallbackIndex);
 };
 
+const getTimelineJumpTarget = (item) => {
+  if (item?.sourceMessage) {
+    return item.sourceMessage;
+  }
+
+  return {
+    messageId: item?.messageId || "",
+    messageIndex: item?.branchIndex,
+    role: item?.role || "user",
+    text: item?.text || "",
+    previewText: item?.previewText || "",
+  };
+};
+
 const getTimelineSourceNodes = () => {
   const conversationIndex =
     typeof getReadyConversationIndex === "function" ? getReadyConversationIndex() : null;
@@ -709,12 +723,13 @@ const setTimelineActiveIndex = (index, options = {}) => {
   const currentOrder = Number.isFinite(item.order) ? item.order : index + 1;
   updateTimelineCount(currentOrder, timelineState.totalUserCount);
 
-  const liveNode =
-    item.node instanceof HTMLElement && item.node.isConnected
-      ? item.node
-      : scrollToMessage && item.sourceMessage && typeof resolveMessageDomNode === "function"
-        ? resolveMessageDomNode(item.sourceMessage, { allowWeak: false })
-        : getTimelineSourceNode(item.source);
+  let liveNode = item.node instanceof HTMLElement && item.node.isConnected ? item.node : null;
+  if (!(liveNode instanceof HTMLElement) && scrollToMessage && item.sourceMessage && typeof resolveMessageDomNode === "function") {
+    liveNode = resolveMessageDomNode(item.sourceMessage, { allowWeak: false });
+  }
+  if (!(liveNode instanceof HTMLElement) && !scrollToMessage) {
+    liveNode = getTimelineSourceNode(item.source);
+  }
   if (liveNode instanceof HTMLElement && liveNode.isConnected) {
     item.node = liveNode;
   }
@@ -731,14 +746,14 @@ const setTimelineActiveIndex = (index, options = {}) => {
     if (typeof jumpToConversationMessage === "function") {
       clearTimelineJumpResolveTimer();
       clearTimelineJumpScrollTimer();
-      const jumpTarget = item.sourceMessage || item;
+      const jumpTarget = getTimelineJumpTarget(item);
       jumpToConversationMessage(jumpTarget, {
         totalMessages:
           typeof getReadyConversationIndex === "function"
             ? getReadyConversationIndex()?.messages?.length
             : timelineState.totalUserCount,
-        onApproximateScroll: () => {
-          showTimelineHint(t("timeline.hintLocating"));
+        onBeforeJump() {
+          showTimelineHint(t("timeline.hintJumping"));
         },
         onResolved: (resolvedNode) => {
           item.node = resolvedNode;

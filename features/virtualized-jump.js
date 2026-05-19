@@ -2,7 +2,7 @@
  * ChatGPT Conversation Toolkit - Virtualized conversation jump helper
  */
 const VIRTUAL_JUMP_SETTLE_DELAY_MS = 180;
-const VIRTUAL_JUMP_MAX_ATTEMPTS = 24;
+const VIRTUAL_JUMP_MAX_ATTEMPTS = 20;
 const VIRTUAL_JUMP_TEXT_NEEDLE_LIMIT = 120;
 const VIRTUAL_JUMP_LARGE_STEP_RATIO = 0.85;
 const VIRTUAL_JUMP_SMALL_STEP_RATIO = 0.25;
@@ -10,6 +10,7 @@ const VIRTUAL_JUMP_STUCK_STEP_RATIO = 1.4;
 const VIRTUAL_JUMP_TEXT_MATCH_THRESHOLD = 0.72;
 const VIRTUAL_JUMP_BOUNDARY_MUTATION_TIMEOUT_MS = 2500;
 const VIRTUAL_JUMP_BOUNDARY_NUDGE_PX = 24;
+const VIRTUALIZER_CALIBRATION_TTL_MS = 5000;
 
 const normalizeVirtualJumpText = (value) =>
   typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
@@ -33,10 +34,11 @@ const getVirtualJumpTargetMessageId = (target) =>
 const getVirtualJumpTargetIndex = (target) => {
   const candidates = [
     target?.messageIndex,
-    target?.branchIndex,
     target?.index,
+    target?.branchIndex,
     target?.sourceMessage?.index,
-    target?.order,
+    target?.sourceMessage?.messageIndex,
+    target?.sourceMessage?.branchIndex,
   ];
   for (const candidate of candidates) {
     if (Number.isFinite(candidate)) {
@@ -65,6 +67,13 @@ const getVirtualJumpTargetText = (target) =>
 
 const getVirtualJumpTargetRole = (target) =>
   target?.role || target?.sourceMessage?.role || "";
+
+const cancelVirtualizedJump = () => {
+  virtualJumpState.activeToken += 1;
+  virtualJumpState.targetKey = "";
+  virtualJumpState.attempts = 0;
+  virtualJumpState.lastWindowSignature = "";
+};
 
 const getVirtualJumpConversationIndex = () =>
   typeof getReadyConversationIndex === "function" ? getReadyConversationIndex() : null;
@@ -190,7 +199,187 @@ const resolveDomNodeConversationMessage = (node) => {
 
 const resolveDomNodeMessageIndex = (node) => {
   const message = resolveDomNodeConversationMessage(node);
-  return Number.isFinite(message?.index) ? message.index : null;
+  if (Number.isFinite(message?.index)) {
+    return message.index;
+  }
+  return resolveDomNodeApproximateMessageIndex(node);
+};
+
+const parseVirtualJumpInteger = (value) => {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? Math.trunc(numberValue) : null;
+};
+
+const addVirtualIndexCandidate = (candidates, index, confidence, source) => {
+  if (!Number.isFinite(index) || index < 0) {
+    return;
+  }
+  const existing = candidates.find((candidate) => candidate.index === index);
+  if (existing) {
+    existing.confidence = Math.max(existing.confidence, confidence);
+    return;
+  }
+  candidates.push({ index, confidence, source });
+};
+
+const getDomVirtualIndexCandidates = (node) => {
+  if (!(node instanceof HTMLElement)) {
+    return [];
+  }
+
+  const candidates = [];
+  const dataIndexElement =
+    node.hasAttribute("data-index") ? node : node.closest("[data-index]") || node.querySelector("[data-index]");
+  const dataIndex = parseVirtualJumpInteger(dataIndexElement?.getAttribute("data-index"));
+  if (Number.isFinite(dataIndex)) {
+    addVirtualIndexCandidate(candidates, dataIndex, 0.9, "data-index");
+  }
+
+  const ariaElement =
+    node.hasAttribute("aria-posinset")
+      ? node
+      : node.closest("[aria-posinset]") || node.querySelector("[aria-posinset]");
+  const ariaPosInset = parseVirtualJumpInteger(ariaElement?.getAttribute("aria-posinset"));
+  if (Number.isFinite(ariaPosInset)) {
+    addVirtualIndexCandidate(candidates, Math.max(0, ariaPosInset - 1), 0.85, "aria-posinset");
+  }
+
+  const turnTestId =
+    node.getAttribute("data-testid") ||
+    node.querySelector('[data-testid^="conversation-turn-"]')?.getAttribute("data-testid") ||
+    "";
+  const turnMatch = turnTestId.match(/conversation-turn-(\d+)/i);
+  if (turnMatch) {
+    const turnIndex = parseVirtualJumpInteger(turnMatch[1]);
+    if (Number.isFinite(turnIndex)) {
+      addVirtualIndexCandidate(candidates, Math.max(0, turnIndex - 1), 0.45, "conversation-turn");
+    }
+  }
+
+  return candidates;
+};
+
+function resolveDomNodeApproximateMessageIndex(node) {
+  const candidates = getDomVirtualIndexCandidates(node)
+    .slice()
+    .sort((left, right) => right.confidence - left.confidence);
+  const best = candidates[0];
+  if (!best || !Number.isFinite(best.index)) {
+    return null;
+  }
+
+  const calibration = getVirtualizerCalibrationState();
+  const offset = calibration?.confidence > 0.6 ? calibration.offset : 0;
+  const messageIndex = best.index + 1 - offset;
+  return Number.isFinite(messageIndex) && messageIndex > 0 ? Math.trunc(messageIndex) : null;
+}
+
+const getVirtualizerCalibrationState = () =>
+  typeof virtualizerCalibrationState !== "undefined" ? virtualizerCalibrationState : null;
+
+const calibrateVirtualIndexOffset = () => {
+  const calibration = getVirtualizerCalibrationState();
+  if (!calibration) {
+    return null;
+  }
+
+  const nodes = typeof getMessageNodes === "function" ? getMessageNodes({ forceRefresh: true }) : [];
+  const groups = new Map();
+
+  nodes.forEach((node) => {
+    if (!(node instanceof HTMLElement) || !node.isConnected) {
+      return;
+    }
+    const message = resolveDomNodeConversationMessage(node);
+    if (!message || !Number.isFinite(message.index)) {
+      return;
+    }
+
+    const messageVirtualBase = message.index - 1;
+    getDomVirtualIndexCandidates(node).forEach((candidate) => {
+      const offset = candidate.index - messageVirtualBase;
+      if (!Number.isFinite(offset) || Math.abs(offset) > 5000) {
+        return;
+      }
+      const key = String(offset);
+      const previous = groups.get(key) || {
+        offset,
+        count: 0,
+        weight: 0,
+        highConfidenceCount: 0,
+      };
+      previous.count += 1;
+      previous.weight += candidate.confidence;
+      if (candidate.confidence >= 0.75) {
+        previous.highConfidenceCount += 1;
+      }
+      groups.set(key, previous);
+    });
+  });
+
+  const best = Array.from(groups.values()).sort((left, right) => {
+    if (right.count !== left.count) {
+      return right.count - left.count;
+    }
+    return right.weight - left.weight;
+  })[0];
+
+  if (
+    best &&
+    best.count >= 3 &&
+    (best.highConfidenceCount >= 3 || best.weight >= 2.4)
+  ) {
+    calibration.offset = best.offset;
+    calibration.confidence = best.highConfidenceCount >= 3 ? 0.85 : 0.61;
+    calibration.updatedAt = Date.now();
+    return calibration;
+  }
+
+  calibration.offset = 0;
+  calibration.confidence = 0;
+  calibration.updatedAt = Date.now();
+  return calibration;
+};
+
+const getCurrentVirtualizerCalibration = () => {
+  const calibration = getVirtualizerCalibrationState();
+  if (!calibration) {
+    return null;
+  }
+
+  if (
+    !calibration.updatedAt ||
+    Date.now() - calibration.updatedAt > VIRTUALIZER_CALIBRATION_TTL_MS
+  ) {
+    return calibrateVirtualIndexOffset();
+  }
+
+  return calibration;
+};
+
+const resolveVirtualIndexCandidates = (target) => {
+  const targetIndex = getVirtualJumpTargetIndex(target);
+  if (!Number.isFinite(targetIndex)) {
+    return [];
+  }
+
+  const calibration = getCurrentVirtualizerCalibration();
+  const offset = calibration?.confidence > 0.6 ? calibration.offset : 0;
+  const base = targetIndex - 1 + offset;
+  const deltas = [0, -1, 1, -2, 2, -5, 5, -10, 10];
+  const candidates = [];
+
+  deltas.forEach((delta) => {
+    const candidate = Math.trunc(base + delta);
+    if (Number.isFinite(candidate) && candidate >= 0 && !candidates.includes(candidate)) {
+      candidates.push(candidate);
+    }
+  });
+
+  return candidates;
 };
 
 const getVirtualJumpMessageRoot = (element) => {
@@ -283,7 +472,7 @@ const findCachedMessageNodeForTarget = (target, options = {}) => {
   return null;
 };
 
-const resolveByPreviewText = (target, options = {}) => {
+const resolveMessageNodeByPreviewText = (target, options = {}) => {
   const targetText = normalizeVirtualJumpText(getVirtualJumpTargetText(target));
   if (!targetText) {
     return null;
@@ -291,21 +480,29 @@ const resolveByPreviewText = (target, options = {}) => {
 
   const role = getVirtualJumpTargetRole(target);
   const preferredIndex = getVirtualJumpTargetIndex(target);
+  const targetNeedle = targetText
+    .slice(0, options.needleLength || VIRTUAL_JUMP_TEXT_NEEDLE_LIMIT)
+    .toLowerCase();
+  const viewportCenter = (window.innerHeight || document.documentElement?.clientHeight || 0) / 2;
   const nodes = typeof getMessageNodes === "function" ? getMessageNodes({ forceRefresh: true }) : [];
   let bestNode = null;
   let bestScore = 0;
+  let bestDistance = Number.POSITIVE_INFINITY;
 
   nodes.forEach((node) => {
     if (!(node instanceof HTMLElement)) {
       return;
     }
     const nodeRole = getVirtualJumpDomRole(node);
-    if (role && nodeRole && nodeRole !== role) {
+    if (role && nodeRole !== role) {
       return;
     }
 
     const nodeText = getVirtualJumpDomText(node);
-    const score = getTextMatchScore(targetText, nodeText);
+    const normalizedNodeText = nodeText.toLowerCase();
+    const score = normalizedNodeText.includes(targetNeedle)
+      ? 1
+      : getTextMatchScore(targetText, nodeText);
     if (score < (options.threshold || VIRTUAL_JUMP_TEXT_MATCH_THRESHOLD)) {
       return;
     }
@@ -316,14 +513,19 @@ const resolveByPreviewText = (target, options = {}) => {
         ? Math.abs(nodeIndex - preferredIndex)
         : 0;
     const adjustedScore = score - Math.min(indexDistance / 1000, 0.12);
-    if (adjustedScore > bestScore) {
+    const rect = node.getBoundingClientRect();
+    const viewportDistance = Math.abs((rect.top + rect.bottom) / 2 - viewportCenter);
+    if (adjustedScore > bestScore || (adjustedScore === bestScore && viewportDistance < bestDistance)) {
       bestScore = adjustedScore;
+      bestDistance = viewportDistance;
       bestNode = node;
     }
   });
 
   return bestNode;
 };
+
+const resolveByPreviewText = resolveMessageNodeByPreviewText;
 
 const resolveMessageDomNode = (target, options = {}) => {
   if (target instanceof HTMLElement) {
@@ -504,6 +706,7 @@ const getRenderedMessageWindow = () => {
   const messageSignature = `${minIndex || ""}:${maxIndex || ""}:${orderedItems
     .map((item) => item.key)
     .join(",")}`;
+  const windowSignature = `${minIndex || ""}:${maxIndex || ""}:${messageIndexes.length}:${scrollTop}`;
 
   return {
     minIndex,
@@ -516,7 +719,7 @@ const getRenderedMessageWindow = () => {
     items: orderedItems,
     scrollTop,
     messageSignature,
-    signature: `${messageSignature}:${scrollTop}`,
+    signature: windowSignature,
   };
 };
 
@@ -538,6 +741,9 @@ const waitForVirtualListSettle = async (delayMs = VIRTUAL_JUMP_SETTLE_DELAY_MS) 
   await nextVirtualJumpFrame();
   await nextVirtualJumpFrame();
   await sleepForVirtualJump(delayMs);
+  if (typeof getMessageNodes === "function") {
+    getMessageNodes({ forceRefresh: true });
+  }
 };
 
 const getVirtualJumpMutationRoot = () => {
@@ -662,14 +868,48 @@ const boundaryProbe = async (direction, options = {}) => {
   return mutated;
 };
 
+const requestImperativeVirtualizerJump = async (target, options = {}) => {
+  if (typeof requestVirtualizerScrollToIndex !== "function") {
+    return { ok: false, reason: "bridge_unavailable" };
+  }
+
+  const candidates = resolveVirtualIndexCandidates(target);
+  if (candidates.length === 0) {
+    return { ok: false, reason: "invalid_index" };
+  }
+
+  try {
+    const timeoutMs =
+      options.virtualizerTimeoutMs ||
+      (typeof VIRTUALIZER_BRIDGE_TIMEOUT_MS !== "undefined" ? VIRTUALIZER_BRIDGE_TIMEOUT_MS : 1200);
+    const result = await requestVirtualizerScrollToIndex(candidates, {
+      align: "center",
+      behavior: "auto",
+      timeoutMs,
+    });
+    return result || { ok: false, reason: "empty_result" };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error?.message || "virtualizer_request_failed",
+    };
+  }
+};
+
 const jumpToConversationMessage = async (target, options = {}) => {
-  const token = virtualJumpState.activeToken + 1;
-  virtualJumpState.activeToken = token;
+  cancelVirtualizedJump();
+  const token = virtualJumpState.activeToken;
   virtualJumpState.targetKey = getVirtualJumpTargetKey(target);
   virtualJumpState.attempts = 0;
   virtualJumpState.lastWindowSignature = "";
 
   const isActive = () => token === virtualJumpState.activeToken;
+  const failJump = (reason) => {
+    if (isActive()) {
+      options.onFailed?.(reason, { reason, target });
+    }
+    return { ok: false, reason };
+  };
   const resolveAndFinish = (node) => {
     if (!isActive() || !(node instanceof HTMLElement) || !node.isConnected) {
       return false;
@@ -700,6 +940,27 @@ const jumpToConversationMessage = async (target, options = {}) => {
     readyIndex?.messages?.length ||
     (Number.isFinite(targetIndex) ? targetIndex : 0);
 
+  const imperativeResult = await requestImperativeVirtualizerJump(target, options);
+  options.onImperativeScroll?.(imperativeResult);
+  if (!isActive()) {
+    return { ok: false, reason: "cancelled" };
+  }
+  if (imperativeResult.ok) {
+    await waitForVirtualListSettle(options.settleDelayMs);
+    if (!isActive()) {
+      return { ok: false, reason: "cancelled" };
+    }
+    const resolvedAfterImperative = resolveMessageDomNode(target);
+    if (resolveAndFinish(resolvedAfterImperative)) {
+      return {
+        ok: true,
+        node: resolvedAfterImperative,
+        reason: "resolved-after-virtualizer",
+        virtualizer: imperativeResult,
+      };
+    }
+  }
+
   if (Number.isFinite(targetIndex) && totalMessages > 1) {
     const ratio = (targetIndex - 1) / Math.max(1, totalMessages - 1);
     if (scrollConversationToVirtualRatio(ratio, "auto")) {
@@ -708,7 +969,7 @@ const jumpToConversationMessage = async (target, options = {}) => {
       if (!isActive()) {
         return { ok: false, reason: "cancelled" };
       }
-      const resolvedAfterRatio = resolveMessageDomNode(target, { allowWeak: false });
+      const resolvedAfterRatio = resolveMessageDomNode(target);
       if (resolveAndFinish(resolvedAfterRatio)) {
         return { ok: true, node: resolvedAfterRatio, reason: "resolved-after-ratio" };
       }
@@ -724,7 +985,7 @@ const jumpToConversationMessage = async (target, options = {}) => {
     }
 
     virtualJumpState.attempts = attempt;
-    const resolvedAtAttemptStart = resolveMessageDomNode(target, { allowWeak: false });
+    const resolvedAtAttemptStart = resolveMessageDomNode(target);
     if (resolveAndFinish(resolvedAtAttemptStart)) {
       return { ok: true, node: resolvedAtAttemptStart, reason: "resolved-before-probe" };
     }
@@ -811,7 +1072,7 @@ const jumpToConversationMessage = async (target, options = {}) => {
       if (!isActive()) {
         return { ok: false, reason: "cancelled" };
       }
-      const resolvedAfterBoundary = resolveMessageDomNode(target, { allowWeak: false });
+      const resolvedAfterBoundary = resolveMessageDomNode(target);
       if (resolveAndFinish(resolvedAfterBoundary)) {
         return { ok: true, node: resolvedAfterBoundary, reason: "resolved-after-boundary" };
       }
@@ -825,14 +1086,11 @@ const jumpToConversationMessage = async (target, options = {}) => {
 
     scrollConversationByVirtualPage(direction, stepScale);
     await waitForVirtualListSettle(options.settleDelayMs);
-    const resolvedNode = resolveMessageDomNode(target, { allowWeak: false });
+    const resolvedNode = resolveMessageDomNode(target);
     if (resolveAndFinish(resolvedNode)) {
       return { ok: true, node: resolvedNode, reason: "resolved-after-probe" };
     }
   }
 
-  if (isActive()) {
-    options.onFailed?.({ reason: "not-rendered", target });
-  }
-  return { ok: false, reason: "not-rendered" };
+  return failJump("not-rendered");
 };

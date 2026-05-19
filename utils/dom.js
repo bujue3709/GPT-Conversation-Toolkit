@@ -239,6 +239,12 @@ const resetConversationState = () => {
   state.searchMatches = [];
   state.currentMatchIndex = -1;
 
+  if (typeof virtualizerCalibrationState !== "undefined" && virtualizerCalibrationState) {
+    virtualizerCalibrationState.offset = 0;
+    virtualizerCalibrationState.confidence = 0;
+    virtualizerCalibrationState.updatedAt = 0;
+  }
+
   if (typeof timelineState !== "undefined" && timelineState) {
     timelineState.items = [];
     timelineState.sourceNodes = [];
