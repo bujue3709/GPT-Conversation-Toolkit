@@ -101,6 +101,19 @@
       cache.byId[conversationId] = entry;
     }
 
+    try {
+      window.dispatchEvent(
+        new CustomEvent("chatgpt-toolkit-conversation-captured", {
+          detail: {
+            conversationId,
+            url,
+            href: entry.href,
+            capturedAt,
+          },
+        }),
+      );
+    } catch (error) {}
+
     return true;
   };
 

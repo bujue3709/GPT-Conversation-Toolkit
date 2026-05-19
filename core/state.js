@@ -100,6 +100,7 @@ const promptState = {
 };
 const timelineState = {
   items: [],
+  allItems: [],
   sourceNodes: [],
   sourceSignature: "",
   sourceCheckAt: 0,
@@ -114,6 +115,29 @@ const timelineState = {
   pointerDown: false,
   dragging: false,
   refreshPending: false,
+};
+const conversationIndexState = {
+  conversationId: "",
+  title: "",
+  source: "",
+  status: "idle",
+  version: 0,
+  activeToken: 0,
+  loadingPromise: null,
+  messages: [],
+  userMessages: [],
+  byMessageId: new Map(),
+  byIndex: new Map(),
+  byUserOrder: new Map(),
+  loadedAt: 0,
+  warnings: [],
+  error: null,
+};
+const virtualJumpState = {
+  activeToken: 0,
+  targetKey: "",
+  attempts: 0,
+  lastWindowSignature: "",
 };
 const folderState = {
   initialized: false,

@@ -82,6 +82,9 @@ const getTimelineSourceKey = (source, index) => {
   return source?.key || `timeline-user-${index}`;
 };
 
+const isTimelineApiSource = (source) =>
+  !(source instanceof HTMLElement) && (source?.source === "api" || String(source?.key || "").startsWith("api:"));
+
 const getTimelineSourceNode = (source, options = {}) => {
   const { resolve = true } = options;
   if (source instanceof HTMLElement) {
@@ -89,6 +92,9 @@ const getTimelineSourceNode = (source, options = {}) => {
   }
   if (!resolve) {
     return source?.node instanceof HTMLElement && source.node.isConnected ? source.node : null;
+  }
+  if (isTimelineApiSource(source) && typeof resolveMessageDomNode === "function") {
+    return resolveMessageDomNode(source);
   }
   if (typeof resolveCachedMessageNode === "function") {
     return resolveCachedMessageNode(source);
@@ -100,12 +106,15 @@ const getTimelineSourceText = (source) => {
   if (source instanceof HTMLElement) {
     return extractMessageText(source);
   }
-  return source?.text || "";
+  return source?.previewText || source?.text || "";
 };
 
 const getTimelineSourceOrder = (source, index) => {
   if (source instanceof HTMLElement && typeof getMessageNodeOrder === "function") {
     return getMessageNodeOrder(source, index);
+  }
+  if (!(source instanceof HTMLElement) && Number.isFinite(source?.userOrder)) {
+    return source.userOrder;
   }
   if (!(source instanceof HTMLElement) && Number.isFinite(source?.order)) {
     return source.order;
@@ -113,7 +122,36 @@ const getTimelineSourceOrder = (source, index) => {
   return index + 1;
 };
 
+const getTimelineSourceBranchIndex = (source, fallbackIndex) => {
+  if (!(source instanceof HTMLElement) && Number.isFinite(source?.index)) {
+    return source.index;
+  }
+  return getTimelineSourceOrder(source, fallbackIndex);
+};
+
 const getTimelineSourceNodes = () => {
+  const conversationIndex =
+    typeof getReadyConversationIndex === "function" ? getReadyConversationIndex() : null;
+  if (conversationIndex?.userMessages?.length) {
+    return conversationIndex.userMessages;
+  }
+  if (
+    typeof loadConversationIndex === "function" &&
+    !(
+      conversationIndexState.status === "failed" &&
+      typeof isConversationIndexForCurrentConversation === "function" &&
+      isConversationIndexForCurrentConversation()
+    )
+  ) {
+    loadConversationIndex()
+      .then(() => {
+        if (timelineState.visible) {
+          scheduleTimelineRefresh();
+        }
+      })
+      .catch(() => {});
+  }
+
   const sourceItems =
     typeof getConversationMessageEntries === "function"
       ? getConversationMessageEntries({
@@ -230,75 +268,14 @@ const extractTimelineTimestamp = (node, index, previousTimestamp) => {
   return index * 60000;
 };
 
-const pickNearestUnselectedIndex = (items, targetTimestamp, selectedIndexes) => {
-  let bestIndex = -1;
-  let bestDistance = Number.POSITIVE_INFINITY;
-
-  items.forEach((item, index) => {
-    if (selectedIndexes.has(index)) {
-      return;
-    }
-    const distance = Math.abs(item.timestamp - targetTimestamp);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      bestIndex = index;
-    }
-  });
-
-  return bestIndex;
-};
-
-const limitTimelineItems = (items, maxNodes = 20) => {
-  if (items.length <= maxNodes) {
-    return items.map((item) => ({ ...item }));
-  }
-
-  const minTimestamp = items[0].timestamp;
-  const maxTimestamp = items[items.length - 1].timestamp;
-  const selectedIndexes = new Set();
-
-  if (maxTimestamp <= minTimestamp) {
-    for (let i = 0; i < maxNodes; i += 1) {
-      const index = Math.round((i * (items.length - 1)) / Math.max(1, maxNodes - 1));
-      selectedIndexes.add(index);
-    }
-  } else {
-    for (let i = 0; i < maxNodes; i += 1) {
-      const ratio = i / Math.max(1, maxNodes - 1);
-      const targetTimestamp = minTimestamp + (maxTimestamp - minTimestamp) * ratio;
-      const picked = pickNearestUnselectedIndex(items, targetTimestamp, selectedIndexes);
-      if (picked >= 0) {
-        selectedIndexes.add(picked);
-      }
-    }
-  }
-
-  const indexes = Array.from(selectedIndexes).sort((left, right) => left - right);
-  return indexes.map((index) => ({ ...items[index] }));
-};
-
 const assignTimelinePositions = (items) => {
   if (items.length <= 1) {
     return items.map((item) => ({ ...item, position: 0.5 }));
   }
 
-  const minTimestamp = items[0].timestamp;
-  const maxTimestamp = items[items.length - 1].timestamp;
-
-  if (maxTimestamp <= minTimestamp) {
-    return items.map((item, index) => ({
-      ...item,
-      position: clampTimelineValue(index / (items.length - 1), 0.02, 0.98),
-    }));
-  }
-
-  return items.map((item) => ({
+  return items.map((item, index) => ({
     ...item,
-    position: clampTimelineValue(
-      (item.timestamp - minTimestamp) / (maxTimestamp - minTimestamp),
-      0.02,
-      0.98
-    ),
+    position: clampTimelineValue(index / (items.length - 1), 0.02, 0.98),
   }));
 };
 
@@ -735,7 +712,9 @@ const setTimelineActiveIndex = (index, options = {}) => {
   const liveNode =
     item.node instanceof HTMLElement && item.node.isConnected
       ? item.node
-      : getTimelineSourceNode(item.source);
+      : scrollToMessage && item.sourceMessage && typeof resolveMessageDomNode === "function"
+        ? resolveMessageDomNode(item.sourceMessage, { allowWeak: false })
+        : getTimelineSourceNode(item.source);
   if (liveNode instanceof HTMLElement && liveNode.isConnected) {
     item.node = liveNode;
   }
@@ -749,13 +728,44 @@ const setTimelineActiveIndex = (index, options = {}) => {
       liveNode.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   } else if (scrollToMessage) {
-    const jumped = scrollConversationToTimelineOrder(currentOrder, timelineState.totalUserCount, {
-      behavior: "smooth",
-    });
-    if (jumped) {
-      queueTimelineNodeResolveAfterJump(index, { highlightMessage });
+    if (typeof jumpToConversationMessage === "function") {
+      clearTimelineJumpResolveTimer();
+      clearTimelineJumpScrollTimer();
+      const jumpTarget = item.sourceMessage || item;
+      jumpToConversationMessage(jumpTarget, {
+        totalMessages:
+          typeof getReadyConversationIndex === "function"
+            ? getReadyConversationIndex()?.messages?.length
+            : timelineState.totalUserCount,
+        onApproximateScroll: () => {
+          showTimelineHint(t("timeline.hintLocating"));
+        },
+        onResolved: (resolvedNode) => {
+          item.node = resolvedNode;
+          if (item.sourceMessage) {
+            item.sourceMessage.node = resolvedNode;
+          }
+          if (item.source && !(item.source instanceof HTMLElement)) {
+            item.source.node = resolvedNode;
+          }
+          if (highlightMessage) {
+            highlightTimelineMessageNode(resolvedNode);
+          }
+          hideTimelineHint();
+        },
+        onFailed: () => {
+          showTimelineHint(t("timeline.hintMessageNotLoaded"));
+        },
+      });
     } else {
-      showTimelineHint(t("timeline.hintMessageNotLoaded"));
+      const jumped = scrollConversationToTimelineOrder(currentOrder, timelineState.totalUserCount, {
+        behavior: "smooth",
+      });
+      if (jumped) {
+        queueTimelineNodeResolveAfterJump(index, { highlightMessage });
+      } else {
+        showTimelineHint(t("timeline.hintMessageNotLoaded"));
+      }
     }
   }
 
@@ -770,30 +780,41 @@ const buildTimelineItemsFromSourceNodes = (sources) => {
 
   sources.forEach((source, index) => {
     const node = getTimelineSourceNode(source, { resolve: false });
+    const apiTimestamp = isTimelineApiSource(source)
+      ? parseTimelineTimestampCandidate(source.createTime || source.updateTime || "")
+      : null;
     const timestamp =
-      node instanceof HTMLElement
+      apiTimestamp !== null
+        ? apiTimestamp
+        : node instanceof HTMLElement
         ? extractTimelineTimestamp(node, index, previousTimestamp)
         : Number.isFinite(previousTimestamp)
           ? previousTimestamp + 60000
           : getTimelineSourceOrder(source, index) * 60000;
     previousTimestamp = timestamp;
+    const order = getTimelineSourceOrder(source, index);
+    const branchIndex = getTimelineSourceBranchIndex(source, index);
     const previewText = normalizeTimelineText(getTimelineSourceText(source));
     withTimestamps.push({
       key: getTimelineSourceKey(source, index),
       source,
+      sourceMessage: isTimelineApiSource(source) ? source : null,
       node,
+      messageId: source?.messageId || "",
+      messageIndex: branchIndex,
+      userOrder: Number.isFinite(source?.userOrder) ? source.userOrder : order,
+      role: source?.role || "user",
+      text: source?.text || previewText,
       timestamp,
-      order: index + 1,
+      order,
+      branchIndex,
       previewText,
     });
   });
 
-  const sortedItems = withTimestamps
-    .slice()
-    .sort((left, right) => left.timestamp - right.timestamp);
-  const limitedItems = limitTimelineItems(sortedItems, TIMELINE_MAX_NODES);
   return {
-    items: assignTimelinePositions(limitedItems),
+    items: assignTimelinePositions(withTimestamps),
+    allItems: withTimestamps,
     totalUserCount: withTimestamps.length,
   };
 };
@@ -1608,6 +1629,7 @@ const destroyTimeline = () => {
 
   setTimelineScrollListenerEnabled(false);
   timelineState.items = [];
+  timelineState.allItems = [];
   timelineState.sourceNodes = [];
   timelineState.sourceSignature = "";
   timelineState.totalUserCount = 0;
@@ -1804,6 +1826,8 @@ const renderTimeline = () => {
   if (conversationChanged) {
     clearTimelineJumpResolveTimer();
     clearTimelineJumpScrollTimer();
+    timelineState.items = [];
+    timelineState.allItems = [];
     timelineState.activeIndex = -1;
     timelineState.sourceCheckAt = 0;
     updateTimelineCount(0, 0);
@@ -1854,6 +1878,7 @@ const renderTimeline = () => {
     ? null
     : buildTimelineItemsFromSourceNodes(sourceNodes);
   const nextItems = sourceStable ? timelineState.items : timelineData.items;
+  const nextAllItems = sourceStable ? timelineState.allItems : timelineData.allItems;
   const totalUserCount = sourceStable ? sourceNodes.length : timelineData.totalUserCount;
   const nextSignature = sourceStable ? timelineState.signature : buildTimelineSignature(nextItems);
   const contentHeight = calculateTimelineContentHeight(track.clientHeight, nextItems.length);
@@ -1881,6 +1906,7 @@ const renderTimeline = () => {
   }
 
   timelineState.items = nextItems;
+  timelineState.allItems = nextAllItems;
   timelineState.sourceNodes = sourceNodes;
   timelineState.sourceSignature = sourceSignature;
   timelineState.totalUserCount = totalUserCount;

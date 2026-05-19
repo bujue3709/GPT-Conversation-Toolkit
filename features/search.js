@@ -49,6 +49,9 @@ const getSearchMatchNode = (match) => {
   if (match instanceof HTMLElement) {
     return match;
   }
+  if (match?.source === "api" && typeof resolveMessageDomNode === "function") {
+    return resolveMessageDomNode(match);
+  }
   if (typeof resolveCachedMessageNode === "function") {
     return resolveCachedMessageNode(match);
   }
@@ -61,6 +64,41 @@ const getSearchMatchText = (match) => {
   }
   return match?.text || "";
 };
+
+const getSearchMatchRanges = (text, queryLower) => {
+  const ranges = [];
+  const lowerText = String(text || "").toLowerCase();
+  const queryLength = queryLower.length;
+  if (!lowerText || !queryLength) {
+    return ranges;
+  }
+
+  let index = lowerText.indexOf(queryLower);
+  while (index !== -1) {
+    ranges.push({
+      start: index,
+      end: index + queryLength,
+    });
+    index = lowerText.indexOf(queryLower, index + queryLength);
+  }
+  return ranges;
+};
+
+const createApiSearchMatch = (message, queryLower, resultIndex) => ({
+  matchId: `${message.key}:match:${resultIndex + 1}`,
+  key: message.key,
+  messageKey: message.key,
+  messageId: message.messageId || "",
+  messageIndex: message.index,
+  userOrder: message.userOrder,
+  role: message.role || "",
+  text: message.text || "",
+  previewText: message.previewText || "",
+  matchRanges: getSearchMatchRanges(message.text || "", queryLower),
+  sourceMessage: message,
+  source: "api",
+  node: null,
+});
 
 const clearTextHighlights = () => {
   const marks = document.querySelectorAll(`.${SEARCH_MARK_CLASS}`);
@@ -273,6 +311,11 @@ const finalizeSearchRun = (token, mode, matches) => {
   state.currentMatchIndex = matches.length > 0 ? 0 : -1;
 
   if (matches.length > 0) {
+    if (mode === "api") {
+      updateStatusByKey("status.searchApiDone", "success", {
+        count: matches.length,
+      });
+    }
     highlightCurrentMatch();
     scrollToCurrentMatch();
   } else if (mode === TOOLKIT_MESSAGE_MODE_LOADED && hasPotentialUnloadedMessagesAbove()) {
@@ -284,7 +327,7 @@ const finalizeSearchRun = (token, mode, matches) => {
   updateSearchUI();
 };
 
-const performSearch = (query) => {
+const performSearch = async (query) => {
   cancelSearchRun();
 
   state.searchQuery = (query || "").trim().toLowerCase();
@@ -305,9 +348,46 @@ const performSearch = (query) => {
     return;
   }
 
-  const mode = normalizeSearchMode(TOOLKIT_MESSAGE_MODE);
-  const sources = getSearchSources(mode);
+  const token = ++activeSearchToken;
+  const queryLower = state.searchQuery;
+  let mode = "api";
+  let sources = [];
+  let apiSearchError = null;
+
+  searchInProgress = true;
+  searchProgressDone = 0;
+  searchProgressTotal = 0;
+  updateStatusByKey("status.searchApiLoading", "info");
+  updateSearchUI();
+
+  if (typeof getConversationIndex === "function") {
+    try {
+      const conversationIndex = await getConversationIndex();
+      if (token !== activeSearchToken) {
+        return;
+      }
+      if (conversationIndex?.status === "ready" && Array.isArray(conversationIndex.messages)) {
+        sources = conversationIndex.messages;
+      }
+    } catch (error) {
+      apiSearchError = error;
+    }
+  }
+
+  if (token !== activeSearchToken) {
+    return;
+  }
+
   if (sources.length === 0) {
+    mode = normalizeSearchMode(TOOLKIT_MESSAGE_MODE);
+    sources = getSearchSources(mode);
+    if (apiSearchError) {
+      updateStatusByKey("status.searchApiFallback", "warn");
+    }
+  }
+
+  if (sources.length === 0) {
+    searchInProgress = false;
     if (mode === TOOLKIT_MESSAGE_MODE_LOADED && hasPotentialUnloadedMessagesAbove()) {
       updateStatusByKey("status.searchNeedLoadMore", "info");
     } else {
@@ -317,15 +397,12 @@ const performSearch = (query) => {
     return;
   }
 
-  const token = ++activeSearchToken;
-  const queryLower = state.searchQuery;
   const matches = [];
   let cursor = 0;
 
-  searchInProgress = true;
   searchProgressDone = 0;
   searchProgressTotal = sources.length;
-  updateStatusByKey("status.searchScanning", "info", {
+  updateStatusByKey(mode === "api" ? "status.searchApiScanning" : "status.searchScanning", "info", {
     done: searchProgressDone,
     total: searchProgressTotal,
   });
@@ -343,11 +420,15 @@ const performSearch = (query) => {
       if (!text || !text.includes(queryLower)) {
         continue;
       }
-      matches.push(source);
+      matches.push(
+        mode === "api"
+          ? createApiSearchMatch(source, queryLower, matches.length)
+          : source,
+      );
     }
     cursor = end;
     searchProgressDone = cursor;
-    updateStatusByKey("status.searchScanning", "info", {
+    updateStatusByKey(mode === "api" ? "status.searchApiScanning" : "status.searchScanning", "info", {
       done: searchProgressDone,
       total: searchProgressTotal,
     });
@@ -372,8 +453,44 @@ const scrollToCurrentMatch = () => {
     return;
   }
 
-  const node = getSearchMatchNode(state.searchMatches[state.currentMatchIndex]);
+  const match = state.searchMatches[state.currentMatchIndex];
+  const node =
+    match?.source === "api" && typeof resolveMessageDomNode === "function"
+      ? resolveMessageDomNode(match, { allowWeak: false })
+      : getSearchMatchNode(match);
   if (!(node instanceof HTMLElement)) {
+    if (match?.source === "api" && typeof jumpToConversationMessage === "function") {
+      updateStatusByKey("status.searchJumping", "info");
+      jumpToConversationMessage(match, {
+        totalMessages:
+          typeof getReadyConversationIndex === "function"
+            ? getReadyConversationIndex()?.messages?.length
+            : 0,
+        onResolved: (resolvedNode) => {
+          if (state.searchMatches[state.currentMatchIndex] !== match) {
+            return;
+          }
+          match.node = resolvedNode;
+          clearSearchHighlight();
+          resolvedNode.classList.add("chatgpt-toolkit-search-highlight");
+          renderCurrentMatchTextHighlight();
+          updateActiveTextMark();
+          const firstMark = resolvedNode.querySelector(`.${SEARCH_MARK_CLASS}`);
+          const scrollTarget = firstMark || resolvedNode;
+          if (typeof scrollElementIntoConversationView === "function") {
+            scrollElementIntoConversationView(scrollTarget, { behavior: "smooth", block: "center" });
+          } else {
+            scrollTarget.scrollIntoView({ behavior: "smooth", block: "center" });
+          }
+        },
+        onFailed: () => {
+          if (state.searchMatches[state.currentMatchIndex] === match) {
+            updateStatusByKey("status.searchJumpFailed", "warn");
+          }
+        },
+      });
+      return;
+    }
     updateStatusByKey("status.searchMatchNotLoaded", "info");
     return;
   }

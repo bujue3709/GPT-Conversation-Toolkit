@@ -31,6 +31,8 @@
         "utils/dom.js",
         "features/conversation-api.js",
         "features/export-normalizer.js",
+        "features/conversation-index.js",
+        "features/virtualized-jump.js",
         "features/export-formatters.js",
         "features/export-download.js",
         "features/export-dom-fallback.js",
