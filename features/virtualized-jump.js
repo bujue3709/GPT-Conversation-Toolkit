@@ -1,8 +1,8 @@
 /*
  * ChatGPT Conversation Toolkit - Virtualized conversation jump helper
  */
-const VIRTUAL_JUMP_SETTLE_DELAY_MS = 180;
-const VIRTUAL_JUMP_MAX_ATTEMPTS = 20;
+const VIRTUAL_JUMP_SETTLE_DELAY_MS = 240;
+const VIRTUAL_JUMP_MAX_ATTEMPTS = 24;
 const VIRTUAL_JUMP_TEXT_NEEDLE_LIMIT = 120;
 const VIRTUAL_JUMP_LARGE_STEP_RATIO = 0.85;
 const VIRTUAL_JUMP_SMALL_STEP_RATIO = 0.25;
@@ -11,6 +11,7 @@ const VIRTUAL_JUMP_TEXT_MATCH_THRESHOLD = 0.72;
 const VIRTUAL_JUMP_BOUNDARY_MUTATION_TIMEOUT_MS = 2500;
 const VIRTUAL_JUMP_BOUNDARY_NUDGE_PX = 24;
 const VIRTUALIZER_CALIBRATION_TTL_MS = 5000;
+const VIRTUAL_JUMP_NATIVE_SCROLL_ENABLED = false;
 
 const normalizeVirtualJumpText = (value) =>
   typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
@@ -68,12 +69,38 @@ const getVirtualJumpTargetText = (target) =>
 const getVirtualJumpTargetRole = (target) =>
   target?.role || target?.sourceMessage?.role || "";
 
+const normalizeJumpTarget = (target) => {
+  if (target instanceof HTMLElement) {
+    return target;
+  }
+
+  const sourceMessage = target?.sourceMessage || null;
+  const messageIndex = getVirtualJumpTargetIndex(target);
+  const messageId = getVirtualJumpTargetMessageId(target);
+  const text = getVirtualJumpTargetText(target);
+  const role = getVirtualJumpTargetRole(target);
+
+  return {
+    ...(target || {}),
+    messageId,
+    messageIndex,
+    index: Number.isFinite(target?.index) ? target.index : messageIndex,
+    role,
+    text: target?.text || sourceMessage?.text || text,
+    previewText: target?.previewText || sourceMessage?.previewText || text,
+    sourceMessage,
+    originalTarget: target,
+  };
+};
+
 const cancelVirtualizedJump = () => {
   virtualJumpState.activeToken += 1;
   virtualJumpState.targetKey = "";
   virtualJumpState.attempts = 0;
   virtualJumpState.lastWindowSignature = "";
 };
+
+const cancelToolkitVirtualJump = cancelVirtualizedJump;
 
 const getVirtualJumpConversationIndex = () =>
   typeof getReadyConversationIndex === "function" ? getReadyConversationIndex() : null;
@@ -194,7 +221,8 @@ const resolveDomNodeConversationMessage = (node) => {
 
   const role = getVirtualJumpDomRole(node);
   const text = getVirtualJumpDomText(node);
-  return findConversationMessageByText(text, role);
+  const preferredIndex = resolveDomNodeApproximateMessageIndex(node);
+  return findConversationMessageByText(text, role, { preferredIndex });
 };
 
 const resolveDomNodeMessageIndex = (node) => {
@@ -667,25 +695,32 @@ const getRenderedMessageWindow = () => {
     }
 
     const message = resolveDomNodeConversationMessage(node);
-    if (!message || !Number.isFinite(message.index)) {
+    const messageIndex = Number.isFinite(message?.index)
+      ? message.index
+      : resolveDomNodeApproximateMessageIndex(node);
+    if (!Number.isFinite(messageIndex)) {
       return;
     }
 
-    const key = message.key || message.messageId || String(message.index);
+    const key =
+      message?.key ||
+      message?.messageId ||
+      getDomMessageIdCandidates(node)[0] ||
+      `idx:${messageIndex}`;
     if (seenKeys.has(key)) {
       return;
     }
     seenKeys.add(key);
-    messageIndexes.push(message.index);
+    messageIndexes.push(messageIndex);
     renderedItems.push({
       key,
       node,
-      message,
-      index: message.index,
-      userOrder: message.userOrder,
-      role: message.role || "",
+      message: message || null,
+      index: messageIndex,
+      userOrder: message?.userOrder,
+      role: message?.role || getVirtualJumpDomRole(node) || "",
     });
-    if (message.role === "user" && Number.isFinite(message.userOrder)) {
+    if (message?.role === "user" && Number.isFinite(message.userOrder)) {
       userOrders.push(message.userOrder);
     }
   });
@@ -869,6 +904,9 @@ const boundaryProbe = async (direction, options = {}) => {
 };
 
 const requestImperativeVirtualizerJump = async (target, options = {}) => {
+  if (!options.tryNativeVirtualizer && !VIRTUAL_JUMP_NATIVE_SCROLL_ENABLED) {
+    return { ok: false, reason: "native_virtualizer_disabled" };
+  }
   if (typeof requestVirtualizerScrollToIndex !== "function") {
     return { ok: false, reason: "bridge_unavailable" };
   }
@@ -897,20 +935,21 @@ const requestImperativeVirtualizerJump = async (target, options = {}) => {
 };
 
 const jumpToConversationMessage = async (target, options = {}) => {
+  const normalizedTarget = normalizeJumpTarget(target);
   cancelVirtualizedJump();
   const token = virtualJumpState.activeToken;
-  virtualJumpState.targetKey = getVirtualJumpTargetKey(target);
+  virtualJumpState.targetKey = getVirtualJumpTargetKey(normalizedTarget);
   virtualJumpState.attempts = 0;
   virtualJumpState.lastWindowSignature = "";
 
   const isActive = () => token === virtualJumpState.activeToken;
   const failJump = (reason) => {
     if (isActive()) {
-      options.onFailed?.(reason, { reason, target });
+      options.onFailed?.(reason, { reason, target: normalizedTarget });
     }
     return { ok: false, reason };
   };
-  const resolveAndFinish = (node) => {
+  const resolveAndFinish = (node, method, metadata = {}) => {
     if (!isActive() || !(node instanceof HTMLElement) || !node.isConnected) {
       return false;
     }
@@ -922,25 +961,29 @@ const jumpToConversationMessage = async (target, options = {}) => {
     } else {
       node.scrollIntoView({ behavior: options.behavior || "smooth", block: options.block || "center" });
     }
-    options.onResolved?.(node);
+    options.onResolved?.(node, {
+      method,
+      target: normalizedTarget,
+      ...metadata,
+    });
     return true;
   };
 
-  options.onBeforeJump?.(target);
+  options.onBeforeJump?.(normalizedTarget);
 
-  const directNode = resolveMessageDomNode(target, { allowWeak: false });
-  if (resolveAndFinish(directNode)) {
+  const directNode = resolveMessageDomNode(normalizedTarget, { allowWeak: false });
+  if (resolveAndFinish(directNode, "direct")) {
     return { ok: true, node: directNode, reason: "resolved" };
   }
 
-  const targetIndex = getVirtualJumpTargetIndex(target);
+  const targetIndex = getVirtualJumpTargetIndex(normalizedTarget);
   const readyIndex = getVirtualJumpConversationIndex();
   const totalMessages =
     options.totalMessages ||
     readyIndex?.messages?.length ||
     (Number.isFinite(targetIndex) ? targetIndex : 0);
 
-  const imperativeResult = await requestImperativeVirtualizerJump(target, options);
+  const imperativeResult = await requestImperativeVirtualizerJump(normalizedTarget, options);
   options.onImperativeScroll?.(imperativeResult);
   if (!isActive()) {
     return { ok: false, reason: "cancelled" };
@@ -950,8 +993,8 @@ const jumpToConversationMessage = async (target, options = {}) => {
     if (!isActive()) {
       return { ok: false, reason: "cancelled" };
     }
-    const resolvedAfterImperative = resolveMessageDomNode(target);
-    if (resolveAndFinish(resolvedAfterImperative)) {
+    const resolvedAfterImperative = resolveMessageDomNode(normalizedTarget);
+    if (resolveAndFinish(resolvedAfterImperative, "native-virtualizer", { virtualizer: imperativeResult })) {
       return {
         ok: true,
         node: resolvedAfterImperative,
@@ -969,8 +1012,8 @@ const jumpToConversationMessage = async (target, options = {}) => {
       if (!isActive()) {
         return { ok: false, reason: "cancelled" };
       }
-      const resolvedAfterRatio = resolveMessageDomNode(target);
-      if (resolveAndFinish(resolvedAfterRatio)) {
+      const resolvedAfterRatio = resolveMessageDomNode(normalizedTarget);
+      if (resolveAndFinish(resolvedAfterRatio, "ratio", { ratio, targetIndex, totalMessages })) {
         return { ok: true, node: resolvedAfterRatio, reason: "resolved-after-ratio" };
       }
     }
@@ -985,8 +1028,8 @@ const jumpToConversationMessage = async (target, options = {}) => {
     }
 
     virtualJumpState.attempts = attempt;
-    const resolvedAtAttemptStart = resolveMessageDomNode(target);
-    if (resolveAndFinish(resolvedAtAttemptStart)) {
+    const resolvedAtAttemptStart = resolveMessageDomNode(normalizedTarget);
+    if (resolveAndFinish(resolvedAtAttemptStart, "probe", { attempt })) {
       return { ok: true, node: resolvedAtAttemptStart, reason: "resolved-before-probe" };
     }
 
@@ -1013,8 +1056,8 @@ const jumpToConversationMessage = async (target, options = {}) => {
         direction = 1;
       } else {
         targetInsideRenderedWindow = true;
-        const weakNode = resolveByPreviewText(target, { threshold: 0.62 });
-        if (resolveAndFinish(weakNode)) {
+        const weakNode = resolveByPreviewText(normalizedTarget, { threshold: 0.62 });
+        if (resolveAndFinish(weakNode, "weak-match", { attempt, renderedWindow })) {
           return { ok: true, node: weakNode, reason: "resolved-by-preview" };
         }
       }
@@ -1072,8 +1115,8 @@ const jumpToConversationMessage = async (target, options = {}) => {
       if (!isActive()) {
         return { ok: false, reason: "cancelled" };
       }
-      const resolvedAfterBoundary = resolveMessageDomNode(target);
-      if (resolveAndFinish(resolvedAfterBoundary)) {
+      const resolvedAfterBoundary = resolveMessageDomNode(normalizedTarget);
+      if (resolveAndFinish(resolvedAfterBoundary, "boundary-probe", { attempt, renderedWindow })) {
         return { ok: true, node: resolvedAfterBoundary, reason: "resolved-after-boundary" };
       }
       if (boundaryMoved) {
@@ -1086,11 +1129,32 @@ const jumpToConversationMessage = async (target, options = {}) => {
 
     scrollConversationByVirtualPage(direction, stepScale);
     await waitForVirtualListSettle(options.settleDelayMs);
-    const resolvedNode = resolveMessageDomNode(target);
-    if (resolveAndFinish(resolvedNode)) {
+    const resolvedNode = resolveMessageDomNode(normalizedTarget);
+    if (resolveAndFinish(resolvedNode, "probe", { attempt })) {
       return { ok: true, node: resolvedNode, reason: "resolved-after-probe" };
     }
   }
 
-  return failJump("not-rendered");
+  return failJump("target_not_mounted_after_probe");
+};
+
+const scrollToMessageIndex = (messageIndex, options = {}) =>
+  jumpToConversationMessage(
+    {
+      messageIndex,
+      index: messageIndex,
+      role: options.role || "",
+      messageId: options.messageId || "",
+      previewText: options.previewText || "",
+      text: options.text || "",
+    },
+    options,
+  );
+
+window.__CGPT_TOOLKIT_VIRTUALIZER__ = {
+  jumpToConversationMessage,
+  scrollToMessageIndex,
+  resolveMessageDomNode,
+  getRenderedMessageWindow,
+  cancelToolkitVirtualJump,
 };

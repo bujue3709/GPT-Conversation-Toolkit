@@ -148,5 +148,3 @@ const requestVirtualizerScrollToIndex = async (candidates, options = {}) => {
     );
   });
 };
-
-initVirtualizerBridge();
