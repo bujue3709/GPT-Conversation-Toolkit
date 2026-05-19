@@ -15,23 +15,23 @@ Recent ChatGPT Web versions use a virtualized list in the conversation area:
 
 Impact on this extension:
 
-- Features that depend on full DOM coverage (locate/search/timeline jump) can only operate on messages that are currently loaded or already captured in local runtime cache.
-- If a target segment has not been rendered yet, the extension may need extra scroll loading before accurate location actions can complete.
+- Search and timeline data prefer the API conversation data, so they can cover more of the full conversation.
+- Jumping to a target message is still limited by ChatGPT's virtualized list. If the target is not mounted in the DOM, the extension can only try to trigger scroll loading and cannot guarantee a one-click jump.
+- In long conversations, if a first/last timeline node or a deep search result does not jump to the target immediately, click it repeatedly so ChatGPT can progressively mount the target area.
 
-## Current Feature Availability (2026-04-22)
+## Current Feature Availability (2026-05-19)
 
 Based on current implementation and verified feedback:
 
 - Available: long-conversation cleanup (manual/auto/recover + memory)
-- Available: JSON export (prefers loaded + cached messages)
+- Available: chat export with selectable `.json`, `.txt`, and `.md` formats in Settings
 - Available: prompt library (add/delete/search/category/sort/import/export/copy)
 - Available: folder management (create/rename/delete/group/sort/drag)
 - Available: language switch, theme sync, and draggable toolbar UI
-- Available: in-page search (works on loaded + cached messages; virtualization-aware hints shown when needed)
-- Available: timeline node rendering, node growth, and active-node sync with viewport scrolling
-- Not stable yet: timeline node click-to-jump
+- Available: in-page search (prefers full API conversation data; jump behavior is limited by virtualization and may require repeated clicks)
+- Available: timeline navigation (prefers full API user messages; jump behavior is limited by virtualization and may require repeated clicks)
 
-If you need reliable positioning in very long conversations, first scroll near the target range so ChatGPT renders that segment, then run search/location actions.
+If you need reliable positioning in very long conversations, first scroll near the target range so ChatGPT renders that segment, or click the same search result / timeline node several times while the virtualized list loads more content.
 
 ## Supported Sites
 
@@ -48,12 +48,12 @@ If you need reliable positioning in very long conversations, first scroll near t
 ## Feature Highlights
 
 - Long conversation cleanup: hide older messages, keep only the latest part visible, remember auto-optimization per conversation, and re-optimize automatically as the visible message count grows.
-- Full JSON export: export the current conversation even if older messages were previously collapsed.
-- In-page search: search within the current conversation, highlight matches, and jump between results.
+- Full export: export the current conversation as `.json`, `.txt`, or `.md`; the format can be selected in Settings.
+- In-page search: search within the current conversation, highlight matches, and jump between results. Deep-message jumps are limited by ChatGPT virtualization and may require repeated clicks.
 - Prompt library: add, delete, search, categorize, sort, import JSON, export JSON, and copy prompts with one click.
 - Settings panel: tweak core preferences locally via a native-style modal, supporting real-time variable tuning and auto-persistence.
 - LaTeX formula copy: hover rendered formulas and copy LaTeX source in one click.
-- Timeline navigation: generate timeline nodes from loaded user messages, preview them, follow viewport activation, and move the timeline panel around (click-to-jump is currently unstable).
+- Timeline navigation: generate user-message timeline nodes from API conversation data, preview them, follow viewport activation, and move the timeline panel around. Deep-node jumps are limited by ChatGPT virtualization and may require repeated clicks.
 - Conversation folders: manage chat folders above the native “Your chats” list without replacing native conversation nodes.
 - Multilingual UI: currently supports Chinese and English, auto-detects the browser language, falls back to English when no match is available, and can be changed manually from the toolbar.
 - Theme sync: the toolbar, timeline, prompt modal, and folder UI follow ChatGPT light/dark appearance.
@@ -135,7 +135,8 @@ The toolbar footer also includes two lightweight links:
 
 ### Export
 
-- “Export” downloads the current conversation as JSON.
+- “Export” downloads the current conversation using the format selected in Settings.
+- Available export formats are `.json`, `.txt`, and `.md`; `.json` is the default.
 - Export still includes all messages even if the page has already been collapsed.
 
 ### Search
@@ -143,15 +144,16 @@ The toolbar footer also includes two lightweight links:
 - Enter a keyword in the toolbar search box and press Enter, or click the search button.
 - Matches are highlighted in the conversation.
 - Use previous / next navigation to move between results.
+- Search can find deep messages from API conversation data, but ChatGPT Web uses a virtualized list. If the target message is not mounted in the DOM yet, jump may not complete in one click; click previous / next again or retry the result so the page can gradually load the target area.
 - If matching messages are currently hidden by long-conversation cleanup, restore them first.
 
 ### Timeline
 
 - The timeline sits on the left side of the conversation area.
-- It only uses user messages that are already loaded in the current page DOM.
+- It prefers API conversation data to generate user-message nodes, instead of relying only on currently loaded DOM messages.
 - The node counter format is `current/total`.
 - Hover a node to preview the message.
-- Click-to-jump is currently unstable under ChatGPT virtualization and is being repaired.
+- Clicking a node attempts to jump to the corresponding message. Because ChatGPT uses a virtualized list, deep nodes and first/last nodes may not reach the target in one click; click the node repeatedly while the page progressively loads the target area.
 - The active timeline node follows page scrolling.
 - The timeline supports wheel scrolling.
 - The timeline panel can be dragged by its header.
@@ -198,12 +200,11 @@ The toolbar footer also includes two lightweight links:
 ### Settings Panel
 
 - Accessed from the toolbar, it provides a native-style sliding modal for extension settings.
-- Allows you to seamlessly tweak the following parameters:
-  - Number of latest messages to keep
-  - Auto-optimization buffer scale
-  - Timeline visible node capacity
-  - Timeline max sampled nodes
-  - Collapse memory retention days
+- Allows you to select the chat export format:
+  - `.json`
+  - `.txt`
+  - `.md`
+- Allows you to select the message reading mode used by some DOM fallback features.
 - After clicking "Save", changes apply immediately without a page refresh and automatically persist to local storage.
 - The modal natively adapts to the ChatGPT light/dark theme dynamically.
 
@@ -414,12 +415,12 @@ Import rules:
 
 ## Known Limitations
 
-- The timeline only works with message nodes that are already loaded into the current page.
-- Search only works on messages currently present in the DOM. If messages were hidden by cleanup, restore them first.
+- Timeline and search prefer API conversation data, so they can cover more of the full conversation.
+- Jumping is still limited by ChatGPT's virtualized list. If the target message is not mounted in the DOM, you may need to repeatedly click the timeline node or search previous/next until the page progressively loads the target area.
+- If messages were hidden by cleanup, restore them first before in-page positioning.
 - LaTeX copy mainly targets rendered formula nodes. For `LaTeX` code blocks, use ChatGPT's native copy button.
 - Folder management depends on the current ChatGPT sidebar DOM structure and stores classification locally. It does not sync to the ChatGPT service.
 - ChatGPT DOM changes may require selector updates over time.
-- Timeline node click-to-jump is currently unstable in long virtualized conversations.
 
 ## Maintainer
 
