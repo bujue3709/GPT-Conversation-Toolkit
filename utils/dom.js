@@ -20,6 +20,50 @@ const getConversationKey = () => {
   return `${window.location.pathname}${window.location.search}`;
 };
 
+const normalizeStrictConversationId = (value) => {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const candidate = value.trim().split(/[?#/]/)[0];
+  if (!candidate || candidate.length < 6) {
+    return null;
+  }
+
+  return /^[A-Za-z0-9._~-]+$/.test(candidate) ? candidate : null;
+};
+
+const getStrictConversationIdCandidates = () => {
+  const candidates = [];
+  const seen = new Set();
+  const addCandidate = (value) => {
+    const normalized = normalizeStrictConversationId(value);
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+    seen.add(normalized);
+    candidates.push(normalized);
+  };
+
+  document.querySelectorAll("[data-conversation-id]").forEach((node) => {
+    addCandidate(node.getAttribute("data-conversation-id"));
+  });
+
+  document.querySelectorAll("[data-message-id][data-conversation-id]").forEach((node) => {
+    addCandidate(node.getAttribute("data-conversation-id"));
+  });
+
+  const urlMatch = window.location.pathname.match(/\/c\/([^/?#]+)/);
+  addCandidate(urlMatch?.[1] || "");
+
+  return candidates;
+};
+
+const getStrictConversationId = () => {
+  const candidates = getStrictConversationIdCandidates();
+  return candidates[0] || null;
+};
+
 const MESSAGE_TURN_SELECTOR = [
   "section[data-turn][data-turn-id]",
   "[data-turn][data-turn-id]",

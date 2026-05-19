@@ -21,6 +21,15 @@ const TOOLKIT_MESSAGE_MODE_VALUES = Object.freeze([
   TOOLKIT_MESSAGE_MODE_EXTENDED,
 ]);
 let TOOLKIT_MESSAGE_MODE = TOOLKIT_MESSAGE_MODE_LOADED;
+const TOOLKIT_EXPORT_FORMAT_JSON = "json";
+const TOOLKIT_EXPORT_FORMAT_TEXT = "txt";
+const TOOLKIT_EXPORT_FORMAT_MARKDOWN = "md";
+const TOOLKIT_EXPORT_FORMAT_VALUES = Object.freeze([
+  TOOLKIT_EXPORT_FORMAT_JSON,
+  TOOLKIT_EXPORT_FORMAT_TEXT,
+  TOOLKIT_EXPORT_FORMAT_MARKDOWN,
+]);
+let TOOLKIT_EXPORT_FORMAT = TOOLKIT_EXPORT_FORMAT_JSON;
 const THEME_ATTR = "data-toolkit-theme";
 const TIMELINE_ID = "chatgpt-conversation-toolkit-timeline";
 const TIMELINE_TRACK_ID = "chatgpt-conversation-toolkit-timeline-track";
@@ -167,6 +176,7 @@ const TOOLKIT_CONFIG_DEFAULTS = Object.freeze({
   timelineMaxNodes: 20,
   collapseMemoryRetentionDays: 10,
   messageMode: TOOLKIT_MESSAGE_MODE_LOADED,
+  exportFormat: TOOLKIT_EXPORT_FORMAT_JSON,
 });
 const TOOLKIT_CONFIG_LIMITS = Object.freeze({
   keepLatest: { min: 1, max: 1000 },
@@ -219,6 +229,9 @@ const normalizeToolkitConfig = (config = {}) => ({
   messageMode: TOOLKIT_MESSAGE_MODE_VALUES.includes(config.messageMode)
     ? config.messageMode
     : TOOLKIT_CONFIG_DEFAULTS.messageMode,
+  exportFormat: TOOLKIT_EXPORT_FORMAT_VALUES.includes(config.exportFormat)
+    ? config.exportFormat
+    : TOOLKIT_CONFIG_DEFAULTS.exportFormat,
 });
 
 const applyToolkitConfig = (config = {}) => {
@@ -229,6 +242,7 @@ const applyToolkitConfig = (config = {}) => {
   TIMELINE_MAX_NODES = normalized.timelineMaxNodes;
   COLLAPSE_MEMORY_RETENTION_MS = normalized.collapseMemoryRetentionDays * 24 * 60 * 60 * 1000;
   TOOLKIT_MESSAGE_MODE = normalized.messageMode;
+  TOOLKIT_EXPORT_FORMAT = normalized.exportFormat;
   return normalized;
 };
 
@@ -240,6 +254,7 @@ const getToolkitConfig = () =>
     timelineMaxNodes: TIMELINE_MAX_NODES,
     collapseMemoryRetentionDays: Math.floor(COLLAPSE_MEMORY_RETENTION_MS / 86400000),
     messageMode: TOOLKIT_MESSAGE_MODE,
+    exportFormat: TOOLKIT_EXPORT_FORMAT,
   });
 
 const loadToolkitConfig = () => {

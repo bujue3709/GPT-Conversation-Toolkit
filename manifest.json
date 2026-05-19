@@ -15,10 +15,26 @@
         "https://chatgpt.com/*"
       ],
       "js": [
+        "features/conversation-capture-bridge.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://chat.openai.com/*",
+        "https://chatgpt.com/*"
+      ],
+      "js": [
         "core/state.js",
         "core/i18n.js",
         "utils/storage.js",
         "utils/dom.js",
+        "features/conversation-api.js",
+        "features/export-normalizer.js",
+        "features/export-formatters.js",
+        "features/export-download.js",
+        "features/export-dom-fallback.js",
+        "features/export.js",
         "ui/theme.js",
         "features/folders.js",
         "features/search.js",
@@ -26,7 +42,6 @@
         "features/timeline.js",
         "features/prompt-library.js",
         "features/collapse.js",
-        "features/export.js",
         "ui/toolbar.js",
         "contentScript.js"
       ],
@@ -34,6 +49,17 @@
         "styles.css"
       ],
       "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "features/conversation-capture-page.js"
+      ],
+      "matches": [
+        "https://chat.openai.com/*",
+        "https://chatgpt.com/*"
+      ]
     }
   ],
   "permissions": [

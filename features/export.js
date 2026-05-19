@@ -1,69 +1,81 @@
 /*
  * ChatGPT Conversation Toolkit - Conversation export
  */
-const exportMessages = () => {
-  ensureConversationState();
-  const entries = getConversationMessageEntries({
-    mode:
-      TOOLKIT_MESSAGE_MODE === TOOLKIT_MESSAGE_MODE_EXTENDED
-        ? TOOLKIT_MESSAGE_MODE_EXTENDED
-        : TOOLKIT_MESSAGE_MODE_LOADED,
-    refreshDom: true,
-    forceRefresh: true,
-  });
-  const mergedEntries = [...entries];
-  const seenKeys = new Set(entries.map((entry) => entry.key));
+let exportInProgress = false;
 
-  if (state.isCollapsed) {
-    state.collapsedNodes.forEach((entry, index) => {
-      const node = entry?.node;
-      if (!(node instanceof HTMLElement)) {
-        return;
-      }
-      const key = getMessageNodeKey(node, index);
-      if (!key || seenKeys.has(key)) {
-        return;
-      }
-      const text = extractMessageText(node);
-      if (!text) {
-        return;
-      }
-      seenKeys.add(key);
-      mergedEntries.push({
-        key,
-        role: detectRole(node),
-        text,
-        order: getMessageNodeOrder(node, index),
-        node: node.isConnected ? node : null,
-        lastSeenAt: Date.now(),
-      });
-    });
+const exportMessages = async (options = {}) => {
+  if (exportInProgress) {
+    updateStatusByKey("status.exportAlreadyRunning", "warn");
+    return null;
   }
 
-  const messages = buildMessagePayloadFromEntries(mergedEntries);
+  exportInProgress = true;
+  updateStatusByKey("status.exportPreparing", "info");
 
-  const payload = {
-    exportedAt: new Date().toISOString(),
-    url: window.location.href,
-    messageCount: messages.length,
-    messages,
-  };
+  const includeRaw = Boolean(options.includeRaw);
+  const conversationIdCandidates = getStrictConversationIdCandidates();
+  const conversationId = conversationIdCandidates[0] || null;
+  let apiError = null;
 
-  const blob = new Blob([JSON.stringify(payload, null, 2)], {
-    type: "application/json",
-  });
+  try {
+    if (!conversationId) {
+      apiError = new ExportApiError("NO_CONVERSATION_ID", "No valid conversation id is available.", {
+        fallbackAllowed: true,
+      });
+      updateStatusByKey("status.exportFallback", "warn");
+    } else {
+      try {
+        updateStatusByKey("status.exportApiLoading", "info");
+        const response = await fetchConversationByIdCandidates(conversationIdCandidates, {
+          timeoutMs: options.timeoutMs,
+          retries: options.retries,
+        });
+        const payload = normalizeConversationApiResponse(response.data, {
+          conversationId: response.conversationId || conversationId,
+          url: window.location.href,
+          includeRaw,
+        });
+        if (response.captured) {
+          payload.apiDataSource = "captured-page-response";
+        }
+        downloadConversationExport(payload, options.format || TOOLKIT_EXPORT_FORMAT);
+        updateStatusByKey("status.exportApiDone", "success", {
+          count: payload.messageCount,
+        });
+        return payload;
+      } catch (error) {
+        apiError = normalizeExportApiError(error);
+        if (!apiError.fallbackAllowed) {
+          updateStatusByKey("status.exportFailed", "warn", {
+            reason: apiError.message,
+          });
+          return null;
+        }
+        updateStatusByKey("status.exportFallback", "warn");
+      }
+    }
 
-  const dateTag = new Date().toISOString().replace(/[:.]/g, "-");
-  const filename = `chatgpt-session-${dateTag}.json`;
-
-  const link = document.createElement("a");
-  const objectUrl = URL.createObjectURL(blob);
-  link.href = objectUrl;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-
-  updateStatusByKey("status.exportStarted", "success");
+    try {
+      const payload = collectMessagesFromDomFallback({
+        conversationId,
+        apiError,
+      });
+      downloadConversationExport(payload, options.format || TOOLKIT_EXPORT_FORMAT);
+      updateStatusByKey("status.exportFallbackDone", "warn", {
+        count: payload.messageCount,
+      });
+      return payload;
+    } catch (fallbackError) {
+      const normalizedFallbackError = normalizeExportApiError(
+        fallbackError,
+        "DOM fallback export failed.",
+      );
+      updateStatusByKey("status.exportFailed", "warn", {
+        reason: normalizedFallbackError.message,
+      });
+      return null;
+    }
+  } finally {
+    exportInProgress = false;
+  }
 };

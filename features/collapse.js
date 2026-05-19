@@ -6,6 +6,7 @@ const COLLAPSE_ARCHIVE_CHECK_DELAY_MS = 240;
 const COLLAPSE_ARCHIVE_CHECK_RETRIES = 6;
 const COLLAPSE_ARCHIVE_TRIGGER_WINDOW_MS = 2200;
 const COLLAPSE_ARCHIVE_ACTION_TEXTS = ["archive", "archived", "归档"];
+const COLLAPSE_AUTO_MEMORY_ENABLED = false;
 
 const getUncollapsedMessageNodes = () =>
   getMessageNodes().filter((node) => !isToolkitCollapsedMessageNode(node));
@@ -332,6 +333,12 @@ const attemptAutoCollapseRememberedConversation = () => {
 };
 
 const scheduleAutoCollapseForConversation = (conversationKey) => {
+  if (!COLLAPSE_AUTO_MEMORY_ENABLED) {
+    clearCollapseMemoryAutoApplyTimer();
+    collapseMemoryState.pendingAutoConversationKey = "";
+    return;
+  }
+
   if (!conversationKey || !isConversationCollapseRemembered(conversationKey)) {
     return;
   }
@@ -347,6 +354,10 @@ const scheduleAutoCollapseForConversation = (conversationKey) => {
 };
 
 const shouldAutoReoptimizeCurrentConversation = (conversationKey = state.conversationKey) => {
+  if (!COLLAPSE_AUTO_MEMORY_ENABLED) {
+    return false;
+  }
+
   if (!conversationKey || !state.isCollapsed || !isConversationCollapseRemembered(conversationKey)) {
     return false;
   }

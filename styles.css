@@ -244,6 +244,10 @@
   color: #22c55e;
 }
 
+#chatgpt-conversation-toolkit .chatgpt-toolkit-status[data-tone="warn"] {
+  color: #f59e0b;
+}
+
 #chatgpt-conversation-toolkit .chatgpt-toolkit-status[data-tone="info"] {
   color: #94a3b8;
 }
@@ -1392,6 +1396,10 @@
 
 #chatgpt-conversation-toolkit[data-toolkit-theme] .chatgpt-toolkit-status[data-tone="success"] {
   color: var(--toolkit-success);
+}
+
+#chatgpt-conversation-toolkit[data-toolkit-theme] .chatgpt-toolkit-status[data-tone="warn"] {
+  color: #f59e0b;
 }
 
 #chatgpt-conversation-toolkit[data-toolkit-theme] .chatgpt-toolkit-tip {

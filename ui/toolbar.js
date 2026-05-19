@@ -106,30 +106,6 @@ const buildToolbarTickerMarkup = (text) =>
     <span class="chatgpt-toolkit-cta-line">${text}</span>
   </span>`;
 
-const refreshCollapseMemoryIndicator = () => {
-  const toolbar = document.getElementById(TOOLKIT_ID);
-  if (!(toolbar instanceof HTMLElement)) {
-    return;
-  }
-
-  const indicator = toolbar.querySelector(".chatgpt-toolkit-memory-indicator");
-  if (!(indicator instanceof HTMLElement)) {
-    return;
-  }
-
-  const remembered = Boolean(
-    state.conversationKey && typeof isConversationCollapseRemembered === "function"
-      ? isConversationCollapseRemembered(state.conversationKey)
-      : false,
-  );
-
-  indicator.textContent = t("toolbar.collapseMemoryBadge");
-  indicator.title = t("toolbar.collapseMemoryHint");
-  indicator.setAttribute("aria-label", t("toolbar.collapseMemoryHint"));
-  indicator.toggleAttribute("hidden", !remembered);
-  indicator.dataset.active = remembered ? "1" : "0";
-};
-
 const refreshToolbarLocalization = () => {
   const toolbar = document.getElementById(TOOLKIT_ID);
   if (!(toolbar instanceof HTMLElement)) {
@@ -147,8 +123,6 @@ const refreshToolbarLocalization = () => {
     subtitle.textContent = t("toolbar.subtitle");
   }
 
-  refreshCollapseMemoryIndicator();
-
   const minimizeButton = toolbar.querySelector('[data-action="minimize"]');
   if (minimizeButton instanceof HTMLButtonElement) {
     minimizeButton.textContent = t("toolbar.minimize");
@@ -165,16 +139,6 @@ const refreshToolbarLocalization = () => {
     languageSelect.innerHTML = getToolbarLanguageOptionsMarkup();
     languageSelect.value = getLanguagePreference();
     languageSelect.setAttribute("aria-label", t("language.label"));
-  }
-
-  const collapseButton = toolbar.querySelector('[data-action="collapse"]');
-  if (collapseButton instanceof HTMLButtonElement) {
-    collapseButton.textContent = t("toolbar.collapse");
-  }
-
-  const restoreButton = toolbar.querySelector('[data-action="restore"]');
-  if (restoreButton instanceof HTMLButtonElement) {
-    restoreButton.textContent = t("toolbar.restore");
   }
 
   const exportButton = toolbar.querySelector('[data-action="export"]');
@@ -215,11 +179,6 @@ const refreshToolbarLocalization = () => {
     nextButton.title = t("toolbar.searchNextTitle");
   }
 
-  const tip = toolbar.querySelector(".chatgpt-toolkit-tip");
-  if (tip instanceof HTMLElement) {
-    tip.textContent = t("toolbar.tip");
-  }
-
   const starButton = toolbar.querySelector('[data-action="open-star-project"]');
   if (starButton instanceof HTMLButtonElement) {
     starButton.title = t("toolbar.starProjectAria");
@@ -258,9 +217,6 @@ const buildToolbar = () => {
       <div class="chatgpt-toolkit-header-meta">
         <div class="chatgpt-toolkit-context">
           <span class="chatgpt-toolkit-subtitle">${t("toolbar.subtitle")}</span>
-          <span class="chatgpt-toolkit-memory-indicator" hidden title="${t("toolbar.collapseMemoryHint")}" aria-label="${t("toolbar.collapseMemoryHint")}">
-            ${t("toolbar.collapseMemoryBadge")}
-          </span>
         </div>
         <label class="chatgpt-toolkit-language" for="chatgpt-toolkit-language-select">
           <span class="chatgpt-toolkit-language-label">${t("language.label")}</span>
@@ -271,12 +227,6 @@ const buildToolbar = () => {
       </div>
     </div>
     <div class="chatgpt-toolkit-actions">
-      <button type="button" class="chatgpt-toolkit-button" data-action="collapse">
-        ${t("toolbar.collapse")}
-      </button>
-      <button type="button" class="chatgpt-toolkit-button" data-action="restore">
-        ${t("toolbar.restore")}
-      </button>
       <button type="button" class="chatgpt-toolkit-button primary" data-action="export">
         ${t("toolbar.export")}
       </button>
@@ -302,7 +252,6 @@ const buildToolbar = () => {
       </div>
     </div>
     <p id="${STATUS_ID}" class="chatgpt-toolkit-status" data-tone="info">${t("toolbar.ready")}</p>
-    <p class="chatgpt-toolkit-tip">${t("toolbar.tip")}</p>
     <div class="chatgpt-toolkit-cta-row" aria-label="Project actions">
       <button type="button" class="chatgpt-toolkit-cta-btn is-accent" data-action="open-star-project" title="${t("toolbar.starProjectAria")}" aria-label="${t("toolbar.starProjectAria")}">
         <span class="chatgpt-toolkit-cta-viewport">
@@ -336,8 +285,6 @@ const buildToolbar = () => {
 
     const actionHandlers = {
       minimize: () => minimizeToolbar(),
-      collapse: () => collapseOldMessages(),
-      restore: () => restoreMessages(),
       export: () => exportMessages(),
       "prompt-library": () => void openPromptModal(),
       "timeline-toggle": () => toggleTimelineVisibility(),
@@ -647,7 +594,6 @@ const attachToolbar = () => {
   ensureMinimizedButton();
   applyToolbarVisibility();
   refreshToolbarLocalization();
-  refreshCollapseMemoryIndicator();
   syncToolkitTheme();
 };
 
@@ -660,9 +606,7 @@ const openToolkitLink = (url) => {
 
 const SETTINGS_MODAL_ID = "chatgpt-toolkit-settings-modal";
 const SETTINGS_INPUT_IDS = Object.freeze({
-  keepLatest: "toolkit-setting-keepLatest",
-  autoReoptimizeBuffer: "toolkit-setting-buffer",
-  collapseMemoryRetentionDays: "toolkit-setting-retentionDays",
+  exportFormat: "toolkit-setting-exportFormat",
   messageMode: "toolkit-setting-messageMode",
 });
 
@@ -676,9 +620,7 @@ const closeSettingsModal = () => {
 };
 
 const getSettingsFallbackConfig = () => ({
-  keepLatest: state.keepLatest || 20,
-  autoReoptimizeBuffer: COLLAPSE_AUTO_REOPTIMIZE_BUFFER || 10,
-  collapseMemoryRetentionDays: Math.floor((COLLAPSE_MEMORY_RETENTION_MS || 864000000) / 86400000),
+  exportFormat: TOOLKIT_EXPORT_FORMAT || TOOLKIT_EXPORT_FORMAT_JSON,
   messageMode: TOOLKIT_MESSAGE_MODE || TOOLKIT_MESSAGE_MODE_LOADED,
 });
 
@@ -701,9 +643,7 @@ const readSettingsInputValue = (id) => {
 
 const readSettingsDraft = () => {
   const draft = {
-    keepLatest: readSettingsInputValue(SETTINGS_INPUT_IDS.keepLatest),
-    autoReoptimizeBuffer: readSettingsInputValue(SETTINGS_INPUT_IDS.autoReoptimizeBuffer),
-    collapseMemoryRetentionDays: readSettingsInputValue(SETTINGS_INPUT_IDS.collapseMemoryRetentionDays),
+    exportFormat: readSettingsInputValue(SETTINGS_INPUT_IDS.exportFormat),
     messageMode: readSettingsInputValue(SETTINGS_INPUT_IDS.messageMode),
   };
   return Object.values(draft).some((value) => value !== undefined) ? draft : null;
@@ -712,23 +652,6 @@ const readSettingsDraft = () => {
 const applySettingsSideEffects = (previousConfig, nextConfig) => {
   if (!previousConfig || !nextConfig) {
     return;
-  }
-
-  const retentionChanged =
-    previousConfig.collapseMemoryRetentionDays !== nextConfig.collapseMemoryRetentionDays;
-  if (retentionChanged && typeof pruneCollapseMemoryEntries === "function") {
-    const pruned = pruneCollapseMemoryEntries();
-    if (pruned && typeof syncCollapseMemoryUi === "function") {
-      syncCollapseMemoryUi();
-    }
-  }
-
-  const autoOptimizeConfigChanged =
-    previousConfig.keepLatest !== nextConfig.keepLatest ||
-    previousConfig.autoReoptimizeBuffer !== nextConfig.autoReoptimizeBuffer ||
-    retentionChanged;
-  if (autoOptimizeConfigChanged && typeof scheduleAutoReoptimizeCurrentConversation === "function") {
-    scheduleAutoReoptimizeCurrentConversation();
   }
 
   const messageModeChanged = previousConfig.messageMode !== nextConfig.messageMode;
@@ -759,21 +682,19 @@ const renderSettingsModal = (modal, draftConfig = null) => {
       </div>
       <div class="chatgpt-toolkit-prompt-list" style="padding: 16px; padding-bottom: 24px; overflow-y: auto;">
         <div class="chatgpt-toolkit-form-group">
-          <label class="chatgpt-toolkit-form-label">${t("settings.keepLatest.label")}</label>
-          <input type="number" id="${SETTINGS_INPUT_IDS.keepLatest}" class="chatgpt-toolkit-input" value="${config.keepLatest}" min="1" max="1000" />
-          <p class="chatgpt-toolkit-form-desc">${t("settings.keepLatest.desc")}</p>
-        </div>
-
-        <div class="chatgpt-toolkit-form-group">
-          <label class="chatgpt-toolkit-form-label">${t("settings.autoReoptimizeBuffer.label")}</label>
-          <input type="number" id="${SETTINGS_INPUT_IDS.autoReoptimizeBuffer}" class="chatgpt-toolkit-input" value="${config.autoReoptimizeBuffer}" min="1" max="1000" />
-          <p class="chatgpt-toolkit-form-desc">${t("settings.autoReoptimizeBuffer.desc")}</p>
-        </div>
-
-        <div class="chatgpt-toolkit-form-group">
-          <label class="chatgpt-toolkit-form-label">${t("settings.collapseMemoryRetentionDays.label")}</label>
-          <input type="number" id="${SETTINGS_INPUT_IDS.collapseMemoryRetentionDays}" class="chatgpt-toolkit-input" value="${config.collapseMemoryRetentionDays}" min="1" max="365" />
-          <p class="chatgpt-toolkit-form-desc">${t("settings.collapseMemoryRetentionDays.desc")}</p>
+          <label class="chatgpt-toolkit-form-label" for="${SETTINGS_INPUT_IDS.exportFormat}">${t("settings.exportFormat.label")}</label>
+          <select id="${SETTINGS_INPUT_IDS.exportFormat}" class="chatgpt-toolkit-input">
+            <option value="${TOOLKIT_EXPORT_FORMAT_JSON}"${config.exportFormat === TOOLKIT_EXPORT_FORMAT_JSON ? " selected" : ""}>
+              ${t("settings.exportFormat.json")}
+            </option>
+            <option value="${TOOLKIT_EXPORT_FORMAT_TEXT}"${config.exportFormat === TOOLKIT_EXPORT_FORMAT_TEXT ? " selected" : ""}>
+              ${t("settings.exportFormat.txt")}
+            </option>
+            <option value="${TOOLKIT_EXPORT_FORMAT_MARKDOWN}"${config.exportFormat === TOOLKIT_EXPORT_FORMAT_MARKDOWN ? " selected" : ""}>
+              ${t("settings.exportFormat.md")}
+            </option>
+          </select>
+          <p class="chatgpt-toolkit-form-desc">${t("settings.exportFormat.desc")}</p>
         </div>
 
         <div class="chatgpt-toolkit-form-group">
