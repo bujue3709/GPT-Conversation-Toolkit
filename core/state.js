@@ -255,9 +255,7 @@ const normalizeToolkitConfig = (config = {}) => ({
     TOOLKIT_CONFIG_DEFAULTS.collapseMemoryRetentionDays,
     TOOLKIT_CONFIG_LIMITS.collapseMemoryRetentionDays,
   ),
-  messageMode: TOOLKIT_MESSAGE_MODE_VALUES.includes(config.messageMode)
-    ? config.messageMode
-    : TOOLKIT_CONFIG_DEFAULTS.messageMode,
+  messageMode: TOOLKIT_CONFIG_DEFAULTS.messageMode,
   exportFormat: TOOLKIT_EXPORT_FORMAT_VALUES.includes(config.exportFormat)
     ? config.exportFormat
     : TOOLKIT_CONFIG_DEFAULTS.exportFormat,

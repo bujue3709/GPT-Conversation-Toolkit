@@ -73,7 +73,6 @@ const I18N_MESSAGES = {
     "status.searchJumpDone": "Message located.",
     "status.searchJumpFailed": "Could not locate the message: {reason}",
     "status.searchMatchNotLoaded": "This match is cached but not currently rendered. Scroll nearby to load it, then search again.",
-    "status.domAdapterDegraded": "ChatGPT DOM changed. Some features may be partially unavailable; compatibility mode is enabled.",
     "status.promptCopyMissing": "Copy failed: prompt not found.",
     "status.promptCopyBlocked": "Copy failed: clipboard access is not available.",
     "status.promptCopyDone": "Copied prompt: {title}",
@@ -163,10 +162,6 @@ const I18N_MESSAGES = {
     "settings.exportFormat.json": ".json",
     "settings.exportFormat.txt": ".txt",
     "settings.exportFormat.md": ".md",
-    "settings.messageMode.label": "Message Data Mode",
-    "settings.messageMode.desc": "Loaded mode is faster. Extended cache mode also uses off-screen cached messages for search/export.",
-    "settings.messageMode.loaded": "Loaded only (recommended)",
-    "settings.messageMode.extended": "Extended cache",
   },
   "zh-CN": {
     "language.label": "语言",
@@ -229,7 +224,6 @@ const I18N_MESSAGES = {
     "status.searchJumpDone": "已定位消息。",
     "status.searchJumpFailed": "无法定位消息：{reason}",
     "status.searchMatchNotLoaded": "\u8fd9\u6761\u5339\u914d\u6d88\u606f\u5df2\u7f13\u5b58\uff0c\u4f46\u5f53\u524d\u672a\u6e32\u67d3\u3002\u8bf7\u6eda\u52a8\u5230\u9644\u8fd1\u52a0\u8f7d\u540e\u518d\u641c\u7d22\u3002",
-    "status.domAdapterDegraded": "检测到 ChatGPT DOM 结构变化，部分功能可能受限，已启用兼容模式。",
     "status.promptCopyMissing": "复制失败：未找到对应 Prompt。",
     "status.promptCopyBlocked": "复制失败：浏览器不允许访问剪贴板。",
     "status.promptCopyDone": "已复制 Prompt：{title}",
@@ -319,10 +313,6 @@ const I18N_MESSAGES = {
     "settings.exportFormat.json": ".json",
     "settings.exportFormat.txt": ".txt",
     "settings.exportFormat.md": ".md",
-    "settings.messageMode.label": "消息数据模式",
-    "settings.messageMode.desc": "仅已加载模式性能更高；扩展缓存模式会额外使用离屏缓存消息用于搜索与导出。",
-    "settings.messageMode.loaded": "仅已加载（推荐）",
-    "settings.messageMode.extended": "扩展缓存",
   },
 };
 

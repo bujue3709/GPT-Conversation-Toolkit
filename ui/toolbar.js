@@ -607,7 +607,6 @@ const openToolkitLink = (url) => {
 const SETTINGS_MODAL_ID = "chatgpt-toolkit-settings-modal";
 const SETTINGS_INPUT_IDS = Object.freeze({
   exportFormat: "toolkit-setting-exportFormat",
-  messageMode: "toolkit-setting-messageMode",
 });
 
 const getSettingsModal = () => document.getElementById(SETTINGS_MODAL_ID);
@@ -621,7 +620,6 @@ const closeSettingsModal = () => {
 
 const getSettingsFallbackConfig = () => ({
   exportFormat: TOOLKIT_EXPORT_FORMAT || TOOLKIT_EXPORT_FORMAT_JSON,
-  messageMode: TOOLKIT_MESSAGE_MODE || TOOLKIT_MESSAGE_MODE_LOADED,
 });
 
 const getSettingsConfig = (config) => {
@@ -644,27 +642,8 @@ const readSettingsInputValue = (id) => {
 const readSettingsDraft = () => {
   const draft = {
     exportFormat: readSettingsInputValue(SETTINGS_INPUT_IDS.exportFormat),
-    messageMode: readSettingsInputValue(SETTINGS_INPUT_IDS.messageMode),
   };
   return Object.values(draft).some((value) => value !== undefined) ? draft : null;
-};
-
-const applySettingsSideEffects = (previousConfig, nextConfig) => {
-  if (!previousConfig || !nextConfig) {
-    return;
-  }
-
-  const messageModeChanged = previousConfig.messageMode !== nextConfig.messageMode;
-  if (messageModeChanged) {
-    state.searchMatches = [];
-    state.currentMatchIndex = -1;
-    clearTextHighlights();
-    clearSearchHighlight();
-    updateSearchUI();
-    if (typeof forceTimelineRefresh === "function") {
-      forceTimelineRefresh();
-    }
-  }
 };
 
 const renderSettingsModal = (modal, draftConfig = null) => {
@@ -696,19 +675,6 @@ const renderSettingsModal = (modal, draftConfig = null) => {
           </select>
           <p class="chatgpt-toolkit-form-desc">${t("settings.exportFormat.desc")}</p>
         </div>
-
-        <div class="chatgpt-toolkit-form-group">
-          <label class="chatgpt-toolkit-form-label" for="${SETTINGS_INPUT_IDS.messageMode}">${t("settings.messageMode.label")}</label>
-          <select id="${SETTINGS_INPUT_IDS.messageMode}" class="chatgpt-toolkit-input">
-            <option value="${TOOLKIT_MESSAGE_MODE_LOADED}"${config.messageMode === TOOLKIT_MESSAGE_MODE_LOADED ? " selected" : ""}>
-              ${t("settings.messageMode.loaded")}
-            </option>
-            <option value="${TOOLKIT_MESSAGE_MODE_EXTENDED}"${config.messageMode === TOOLKIT_MESSAGE_MODE_EXTENDED ? " selected" : ""}>
-              ${t("settings.messageMode.extended")}
-            </option>
-          </select>
-          <p class="chatgpt-toolkit-form-desc">${t("settings.messageMode.desc")}</p>
-        </div>
       </div>
       <div class="chatgpt-toolkit-prompt-footer">
         <span></span>
@@ -722,14 +688,12 @@ const renderSettingsModal = (modal, draftConfig = null) => {
   const saveBtn = modal.querySelector(".chatgpt-toolkit-settings-save");
   if (saveBtn instanceof HTMLButtonElement) {
     saveBtn.addEventListener("click", () => {
-      const previousConfig = getSettingsConfig();
       const draft = readSettingsDraft();
-      const nextConfig =
-        typeof saveToolkitConfig === "function"
-          ? saveToolkitConfig(draft || {})
-          : getSettingsConfig(draft);
-
-      applySettingsSideEffects(previousConfig, nextConfig);
+      if (typeof saveToolkitConfig === "function") {
+        saveToolkitConfig(draft || {});
+      } else {
+        getSettingsConfig(draft);
+      }
 
       if (typeof updateStatusByKey === "function") {
         updateStatusByKey("settings.saved", "success");

@@ -146,7 +146,6 @@ if (!window[TOOLKIT_BOOTSTRAP_FLAG]) {
   let pendingConversationMutationRefresh = false;
   let pendingSidebarMutationRefresh = false;
   let lastMessageStoreSyncAt = 0;
-  let lastDomHealthOk = true;
 
   const getObservedElement = (node) => {
     if (node instanceof Element) {
@@ -265,7 +264,7 @@ if (!window[TOOLKIT_BOOTSTRAP_FLAG]) {
       });
 
       if (needsPresenceCheck) {
-        syncDomAdapterHealth({ report: true });
+        syncDomAdapterHealth();
       }
     });
   };
@@ -291,16 +290,12 @@ if (!window[TOOLKIT_BOOTSTRAP_FLAG]) {
     queueObserverCallback();
   };
 
-  const syncDomAdapterHealth = ({ report = false } = {}) => {
+  const syncDomAdapterHealth = () => {
     if (typeof runDomAdapterHealthCheck !== "function") {
       return;
     }
 
-    const health = runDomAdapterHealthCheck({ refreshMessages: false });
-    if (report && !health.ok && lastDomHealthOk) {
-      updateStatusByKey("status.domAdapterDegraded", "warn");
-    }
-    lastDomHealthOk = Boolean(health.ok);
+    runDomAdapterHealthCheck({ refreshMessages: false });
   };
 
   const refreshMessageStoreSnapshot = ({ force = false } = {}) => {
@@ -585,7 +580,7 @@ if (!window[TOOLKIT_BOOTSTRAP_FLAG]) {
         timelineRefresh: forcePresenceCheck || conversationRootChanged,
         folderRefresh: forcePresenceCheck || sidebarRootChanged,
       });
-      syncDomAdapterHealth({ report: forcePresenceCheck });
+      syncDomAdapterHealth();
     }
 
     const missingRoot =
