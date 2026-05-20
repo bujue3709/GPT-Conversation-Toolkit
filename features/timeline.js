@@ -10,8 +10,11 @@ const TIMELINE_JUMP_RETRY_DELAY_MS = 180;
 const TIMELINE_JUMP_RETRY_ATTEMPTS = 4;
 const TIMELINE_JUMP_STEP_DELAY_MS = 72;
 const TIMELINE_JUMP_STEP_MAX_STEPS = 6;
+const TIMELINE_PROGRAMMATIC_JUMP_LOCK_MS = 35000;
 let timelineJumpResolveTimer = null;
 let timelineJumpScrollTimer = null;
+let timelineProgrammaticJumpToken = 0;
+let timelineProgrammaticJumpUntil = 0;
 
 const getTimelineElements = () => {
   const timeline = document.getElementById(TIMELINE_ID);
@@ -347,7 +350,36 @@ const compressTimelineWheelDelta = (delta) => {
   return delta > 0 ? distance : -distance;
 };
 
-const isTimelineInteractionLocked = () => timelineState.pointerDown || timelineState.dragging;
+const isTimelineProgrammaticJumpLocked = () =>
+  timelineProgrammaticJumpUntil > 0 && Date.now() < timelineProgrammaticJumpUntil;
+
+const beginTimelineProgrammaticJump = () => {
+  timelineProgrammaticJumpToken += 1;
+  timelineProgrammaticJumpUntil = Date.now() + TIMELINE_PROGRAMMATIC_JUMP_LOCK_MS;
+  return timelineProgrammaticJumpToken;
+};
+
+const extendTimelineProgrammaticJump = (token) => {
+  if (token === timelineProgrammaticJumpToken) {
+    timelineProgrammaticJumpUntil = Date.now() + TIMELINE_PROGRAMMATIC_JUMP_LOCK_MS;
+  }
+};
+
+const finishTimelineProgrammaticJump = (token) => {
+  if (token === timelineProgrammaticJumpToken) {
+    const shouldRefresh = timelineState.refreshPending;
+    timelineProgrammaticJumpUntil = 0;
+    if (shouldRefresh) {
+      timelineState.refreshPending = false;
+      scheduleTimelineRefresh();
+    }
+  }
+};
+
+const isTimelineJumpTokenActive = (token) => token === timelineProgrammaticJumpToken;
+
+const isTimelineInteractionLocked = () =>
+  timelineState.pointerDown || timelineState.dragging || isTimelineProgrammaticJumpLocked();
 
 const markTimelineRefreshPending = () => {
   timelineState.refreshPending = true;
@@ -723,39 +755,38 @@ const setTimelineActiveIndex = (index, options = {}) => {
   const currentOrder = Number.isFinite(item.order) ? item.order : index + 1;
   updateTimelineCount(currentOrder, timelineState.totalUserCount);
 
-  let liveNode = item.node instanceof HTMLElement && item.node.isConnected ? item.node : null;
-  if (!(liveNode instanceof HTMLElement) && scrollToMessage && item.sourceMessage && typeof resolveMessageDomNode === "function") {
-    liveNode = resolveMessageDomNode(item.sourceMessage, { allowWeak: false });
-  }
-  if (!(liveNode instanceof HTMLElement) && !scrollToMessage) {
+  const jumpTarget = scrollToMessage ? getTimelineJumpTarget(item) : null;
+  let liveNode = null;
+  if (scrollToMessage && typeof resolveMessageDomNode === "function") {
+    liveNode = resolveMessageDomNode(jumpTarget, { allowWeak: false });
+  } else if (!scrollToMessage) {
     liveNode = getTimelineSourceNode(item.source);
   }
   if (liveNode instanceof HTMLElement && liveNode.isConnected) {
     item.node = liveNode;
   }
 
-  if (scrollToMessage && liveNode instanceof HTMLElement && liveNode.isConnected) {
+  if (scrollToMessage) {
     clearTimelineJumpResolveTimer();
     clearTimelineJumpScrollTimer();
-    if (typeof scrollElementIntoConversationView === "function") {
-      scrollElementIntoConversationView(liveNode, { behavior: "smooth", block: "center" });
-    } else {
-      liveNode.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-  } else if (scrollToMessage) {
+    const jumpToken = beginTimelineProgrammaticJump();
     if (typeof jumpToConversationMessage === "function") {
-      clearTimelineJumpResolveTimer();
-      clearTimelineJumpScrollTimer();
-      const jumpTarget = getTimelineJumpTarget(item);
-      jumpToConversationMessage(jumpTarget, {
+      const jumpPromise = jumpToConversationMessage(jumpTarget, {
         totalMessages:
           typeof getReadyConversationIndex === "function"
             ? getReadyConversationIndex()?.messages?.length
             : timelineState.totalUserCount,
         onBeforeJump() {
+          extendTimelineProgrammaticJump(jumpToken);
           showTimelineHint(t("timeline.hintJumping"));
         },
+        onProgress() {
+          extendTimelineProgrammaticJump(jumpToken);
+        },
         onResolved: (resolvedNode) => {
+          if (!isTimelineJumpTokenActive(jumpToken)) {
+            return;
+          }
           item.node = resolvedNode;
           if (item.sourceMessage) {
             item.sourceMessage.node = resolvedNode;
@@ -767,21 +798,43 @@ const setTimelineActiveIndex = (index, options = {}) => {
             highlightTimelineMessageNode(resolvedNode);
           }
           hideTimelineHint();
+          finishTimelineProgrammaticJump(jumpToken);
         },
         onFailed: () => {
+          if (!isTimelineJumpTokenActive(jumpToken)) {
+            return;
+          }
           showTimelineHint(t("timeline.hintMessageNotLoaded"));
+          finishTimelineProgrammaticJump(jumpToken);
         },
       });
+      if (jumpPromise && typeof jumpPromise.then === "function") {
+        jumpPromise
+          .then((result) => {
+            if (isTimelineJumpTokenActive(jumpToken) && !result?.ok) {
+              finishTimelineProgrammaticJump(jumpToken);
+            }
+          })
+          .catch(() => {
+            if (isTimelineJumpTokenActive(jumpToken)) {
+              showTimelineHint(t("timeline.hintMessageNotLoaded"));
+              finishTimelineProgrammaticJump(jumpToken);
+            }
+          });
+      }
     } else {
       const jumped = scrollConversationToTimelineOrder(currentOrder, timelineState.totalUserCount, {
-        behavior: "smooth",
+        behavior: "auto",
       });
       if (jumped) {
         queueTimelineNodeResolveAfterJump(index, { highlightMessage });
+        setTimeout(() => finishTimelineProgrammaticJump(jumpToken), TIMELINE_PROGRAMMATIC_JUMP_LOCK_MS);
       } else {
         showTimelineHint(t("timeline.hintMessageNotLoaded"));
+        finishTimelineProgrammaticJump(jumpToken);
       }
     }
+    return;
   }
 
   if (highlightMessage && liveNode instanceof HTMLElement && liveNode.isConnected) {
