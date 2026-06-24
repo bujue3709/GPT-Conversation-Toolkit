@@ -2,7 +2,7 @@
 
 [简体中文](./README.md) | English
 
-A browser extension for `ChatGPT Web` focused on full-session export, in-page search, a prompt library, timeline navigation, sidebar folder management, and multilingual UI support.
+A browser extension for `ChatGPT Web` focused on full-session export, in-page search, a prompt library, timeline navigation, usage quota reminders, sidebar folder management, and multilingual UI support.
 
 Current active maintainer: `bujue3709` (primary / sole active maintainer)
 
@@ -38,12 +38,13 @@ Impact on this extension:
 - In-page search: search within the current conversation, highlight matches, and jump between results. Deep messages are positioned through the virtualized-jump flow.
 - Prompt library: add, delete, search, categorize, sort, import JSON, export JSON, and copy prompts with one click.
 - Settings panel: tweak core preferences locally via a native-style modal, supporting real-time variable tuning and auto-persistence.
+- Usage quota reminder: estimate current message usage locally, with a draggable floating reminder, remaining quota, estimated rate, reset time, limit warnings, and official presets.
 - LaTeX formula copy: hover rendered formulas and copy LaTeX source in one click.
 - Timeline navigation: generate user-message timeline nodes from API conversation data, preview them, follow viewport activation, move the timeline panel around, and jump to far nodes.
 - Conversation folders: manage chat folders above the native “Your chats” list without replacing native conversation nodes.
 - Multilingual UI: currently supports Chinese and English, auto-detects the browser language, falls back to English when no match is available, and can be changed manually from the toolbar.
-- Theme sync: the toolbar, timeline, prompt modal, and folder UI follow ChatGPT light/dark appearance.
-- Draggable floating UI: the minimized toolbar button and timeline can both be dragged.
+- Theme sync: the toolbar, timeline, quota reminder, prompt modal, and folder UI follow ChatGPT light/dark appearance.
+- Draggable floating UI: the minimized toolbar button, timeline, and quota reminder can be dragged.
 
 ## Installation
 
@@ -84,6 +85,7 @@ Available actions:
 - Export the current conversation
 - Open the prompt library
 - Show or hide the timeline
+- Show or hide the quota reminder
 - Search messages
 - Settings panel
 - Change language
@@ -144,6 +146,25 @@ The toolbar footer also includes two lightweight links:
   - it shows `已经没有消息了` when everything is already visible
   - it shows `请恢复隐藏消息` if a legacy collapsed state still exists
 
+### Usage Quota Reminder
+
+- The quota reminder appears as a floating widget. It can be dragged, minimized, or hidden.
+- The reminder shows:
+  - used / total messages
+  - remaining messages
+  - estimated usage rate in messages per hour
+  - time remaining until reset
+  - warning states when approaching or reaching the configured limit
+- Counting is a local estimate. The extension listens for ChatGPT send-message requests, stores sent-message counts by model and quota window, and uses dedupe keys to avoid double counting retries.
+- The settings panel includes official presets:
+  - `Plus GPT-5.5`: 160 messages / 3 hours
+  - `Go GPT-5.5`: 160 messages / 3 hours
+  - `Go Thinking`: 10 messages / 5 hours
+  - `Free GPT-5.5`: OpenAI publishes the 5-hour window, but the message count is dynamic, so keep or adjust the manual limit
+  - `Business / Enterprise / Edu`: limits may depend on guardrails, workspace policy, or admin configuration, so keep or adjust the manual limit
+- When ChatGPT itself displays a rate-limit or reset-time notice, the extension tries to read that page text and calibrate the reset time.
+- The feature does not call private OpenAI quota APIs and does not upload usage data to external services.
+
 ### Prompt Library
 
 - Open it from the toolbar.
@@ -186,6 +207,13 @@ The toolbar footer also includes two lightweight links:
   - `.json`
   - `.txt`
   - `.md`
+- Allows you to configure the usage quota reminder:
+  - show/hide the quota reminder
+  - official preset
+  - message limit
+  - reset interval in minutes
+  - warning threshold percentage
+  - danger threshold by remaining messages
 - After clicking "Save", changes apply immediately without a page refresh and automatically persist to local storage.
 - The modal natively adapts to the ChatGPT light/dark theme dynamically.
 
@@ -211,6 +239,7 @@ features/
   search.js
   latex-copy.js
   timeline.js
+  quota-reminder.js
   prompt-library.js
 
 ui/
@@ -252,12 +281,14 @@ manifest.json
   Hover button for rendered formulas and one-click LaTeX source copy.
 - [features/timeline.js](./features/timeline.js)
   Timeline rendering, preview, scrolling, dragging, and active-node synchronization.
+- [features/quota-reminder.js](./features/quota-reminder.js)
+  Usage quota reminder, local counting, official presets, reset-time calibration, and draggable widget behavior.
 - [features/prompt-library.js](./features/prompt-library.js)
   Prompt library CRUD, filtering, copying, import, and export.
 - [contentScript.js](./contentScript.js)
   Bootstrap entry point, initialization, and DOM observer wiring.
 - [styles.css](./styles.css)
-  Styles for the toolbar, timeline, prompt modal, and folder UI.
+  Styles for the toolbar, timeline, quota reminder, prompt modal, and folder UI.
 
 ## Configuration
 
@@ -285,6 +316,11 @@ Key fields:
 - `COLLAPSE_AUTO_REOPTIMIZE_BUFFER`: legacy auto-cleanup buffer; the cleanup feature is deprecated
 - `TIMELINE_VISIBLE_NODE_CAPACITY`: approximate number of timeline nodes visible in one screenful
 - `TIMELINE_MAX_NODES`: maximum sampled timeline node count
+- `quotaPlanPreset`: official quota preset or custom mode
+- `quotaMaxMessages`: message limit used by the local estimate
+- `quotaResetIntervalMinutes`: reset-window length used by the local estimate
+- `quotaWarningPercent`: usage percentage that triggers warning state
+- `quotaDangerRemaining`: remaining-message count that triggers danger state
 
 ## Exported Conversation JSON
 
@@ -400,6 +436,7 @@ Import rules:
 - Jumping still depends on ChatGPT Web eventually mounting the target DOM. The extension retries automatically, but major ChatGPT DOM changes may require selector updates.
 - Long-conversation cleanup is deprecated. If a legacy collapsed state still exists, restore hidden messages before in-page positioning.
 - LaTeX copy mainly targets rendered formula nodes. For `LaTeX` code blocks, use ChatGPT's native copy button.
+- Usage quota reminders are local estimates. OpenAI does not expose a stable public API for the current account's exact remaining message quota. If you use ChatGPT from another device, browser, or conversation, the local count may be incomplete. Official presets are only default configuration helpers; Free, Business, and Enterprise/Edu cases may still need manual adjustment.
 - Folder management depends on the current ChatGPT sidebar DOM structure and stores classification locally. It does not sync to the ChatGPT service.
 - ChatGPT DOM changes may require selector updates over time.
 
