@@ -156,8 +156,6 @@ const refreshToolbarLocalization = () => {
     settingsButton.textContent = t("toolbar.settings");
   }
 
-  updateQuotaToggleButton();
-
   const searchInput = toolbar.querySelector("#chatgpt-toolkit-search-input");
   if (searchInput instanceof HTMLInputElement) {
     searchInput.placeholder = t("toolbar.searchPlaceholder");
@@ -238,9 +236,6 @@ const buildToolbar = () => {
       <button type="button" class="chatgpt-toolkit-button" data-action="timeline-toggle">
         ${timelineState.visible ? t("toolbar.timelineHide") : t("toolbar.timelineShow")}
       </button>
-      <button type="button" class="chatgpt-toolkit-button" data-action="quota-toggle">
-        ${quotaState.visible ? t("toolbar.quotaHide") : t("toolbar.quotaShow")}
-      </button>
       <button type="button" class="chatgpt-toolkit-button" data-action="settings">
         ${t("toolbar.settings")}
       </button>
@@ -293,7 +288,6 @@ const buildToolbar = () => {
       export: () => exportMessages(),
       "prompt-library": () => void openPromptModal(),
       "timeline-toggle": () => toggleTimelineVisibility(),
-      "quota-toggle": () => toggleQuotaReminder(),
       settings: () => openSettingsModal(),
       "open-star-project": () => openToolkitLink(TOOLKIT_REPO_URL),
       "open-feedback": () => openToolkitLink(TOOLKIT_FEEDBACK_URL),
@@ -603,19 +597,6 @@ const attachToolbar = () => {
   syncToolkitTheme();
 };
 
-const updateQuotaToggleButton = () => {
-  const button = document.querySelector(`#${TOOLKIT_ID} [data-action="quota-toggle"]`);
-  if (!(button instanceof HTMLButtonElement)) {
-    return;
-  }
-  const config = typeof getToolkitConfig === "function" ? getToolkitConfig() : {};
-  const visible = !!config.quotaEnabled && quotaState.visible;
-  button.textContent = visible ? t("toolbar.quotaHide") : t("toolbar.quotaShow");
-  button.setAttribute("aria-label", button.textContent);
-  button.disabled = config.quotaEnabled === false;
-  button.title = config.quotaEnabled === false ? t("settings.quota.enabled.label") : "";
-};
-
 const openToolkitLink = (url) => {
   if (!url) {
     return;
@@ -626,12 +607,6 @@ const openToolkitLink = (url) => {
 const SETTINGS_MODAL_ID = "chatgpt-toolkit-settings-modal";
 const SETTINGS_INPUT_IDS = Object.freeze({
   exportFormat: "toolkit-setting-exportFormat",
-  quotaEnabled: "toolkit-setting-quotaEnabled",
-  quotaPlanPreset: "toolkit-setting-quotaPlanPreset",
-  quotaMaxMessages: "toolkit-setting-quotaMaxMessages",
-  quotaResetIntervalMinutes: "toolkit-setting-quotaResetIntervalMinutes",
-  quotaWarningPercent: "toolkit-setting-quotaWarningPercent",
-  quotaDangerRemaining: "toolkit-setting-quotaDangerRemaining",
 });
 
 const getSettingsModal = () => document.getElementById(SETTINGS_MODAL_ID);
@@ -645,12 +620,6 @@ const closeSettingsModal = () => {
 
 const getSettingsFallbackConfig = () => ({
   exportFormat: TOOLKIT_EXPORT_FORMAT || TOOLKIT_EXPORT_FORMAT_JSON,
-  quotaEnabled: true,
-  quotaPlanPreset: "custom",
-  quotaMaxMessages: 80,
-  quotaResetIntervalMinutes: 180,
-  quotaWarningPercent: 80,
-  quotaDangerRemaining: 5,
 });
 
 const getSettingsConfig = (config) => {
@@ -662,28 +631,6 @@ const getSettingsConfig = (config) => {
   return currentConfig;
 };
 
-const getQuotaPresetOptionsMarkup = (selectedPreset) => {
-  const presetValues =
-    typeof QUOTA_PLAN_PRESET_VALUES !== "undefined" ? QUOTA_PLAN_PRESET_VALUES : ["custom"];
-  return presetValues
-    .map((presetKey) => {
-      const preset = getQuotaPlanPreset(presetKey);
-      const label = t(preset.labelKey || "quota.preset.custom");
-      return `<option value="${presetKey}"${presetKey === selectedPreset ? " selected" : ""}>${label}</option>`;
-    })
-    .join("");
-};
-
-const getQuotaPresetNote = (presetKey) => {
-  const preset = getQuotaPlanPreset(presetKey);
-  const confidenceText = t(preset.confidenceKey || "quota.preset.confidence.manual");
-  const sourceText = t("quota.preset.source");
-  if (Number.isFinite(preset.maxMessages) && Number.isFinite(preset.resetIntervalMinutes)) {
-    return `${confidenceText} ${sourceText}`;
-  }
-  return `${confidenceText} ${t("quota.preset.manualRequired")}`;
-};
-
 const readSettingsInputValue = (id) => {
   const input = document.getElementById(id);
   if (input instanceof HTMLInputElement || input instanceof HTMLSelectElement) {
@@ -692,20 +639,9 @@ const readSettingsInputValue = (id) => {
   return undefined;
 };
 
-const readSettingsCheckboxValue = (id) => {
-  const input = document.getElementById(id);
-  return input instanceof HTMLInputElement ? input.checked : undefined;
-};
-
 const readSettingsDraft = () => {
   const draft = {
     exportFormat: readSettingsInputValue(SETTINGS_INPUT_IDS.exportFormat),
-    quotaEnabled: readSettingsCheckboxValue(SETTINGS_INPUT_IDS.quotaEnabled),
-    quotaPlanPreset: readSettingsInputValue(SETTINGS_INPUT_IDS.quotaPlanPreset),
-    quotaMaxMessages: readSettingsInputValue(SETTINGS_INPUT_IDS.quotaMaxMessages),
-    quotaResetIntervalMinutes: readSettingsInputValue(SETTINGS_INPUT_IDS.quotaResetIntervalMinutes),
-    quotaWarningPercent: readSettingsInputValue(SETTINGS_INPUT_IDS.quotaWarningPercent),
-    quotaDangerRemaining: readSettingsInputValue(SETTINGS_INPUT_IDS.quotaDangerRemaining),
   };
   return Object.values(draft).some((value) => value !== undefined) ? draft : null;
 };
@@ -739,43 +675,6 @@ const renderSettingsModal = (modal, draftConfig = null) => {
           </select>
           <p class="chatgpt-toolkit-form-desc">${t("settings.exportFormat.desc")}</p>
         </div>
-        <div class="chatgpt-toolkit-settings-section">
-          <strong class="chatgpt-toolkit-settings-section-title">${t("settings.quota.label")}</strong>
-          <label class="chatgpt-toolkit-form-check" for="${SETTINGS_INPUT_IDS.quotaEnabled}">
-            <input type="checkbox" id="${SETTINGS_INPUT_IDS.quotaEnabled}"${config.quotaEnabled ? " checked" : ""} />
-            <span>${t("settings.quota.enabled.label")}</span>
-          </label>
-          <p class="chatgpt-toolkit-form-desc">${t("settings.quota.enabled.desc")}</p>
-          <div class="chatgpt-toolkit-form-group">
-            <label class="chatgpt-toolkit-form-label" for="${SETTINGS_INPUT_IDS.quotaPlanPreset}">${t("settings.quota.preset.label")}</label>
-            <select id="${SETTINGS_INPUT_IDS.quotaPlanPreset}" class="chatgpt-toolkit-input">
-              ${getQuotaPresetOptionsMarkup(config.quotaPlanPreset)}
-            </select>
-            <p id="toolkit-setting-quotaPresetNote" class="chatgpt-toolkit-form-desc">${getQuotaPresetNote(config.quotaPlanPreset)}</p>
-          </div>
-          <div class="chatgpt-toolkit-settings-grid">
-            <div class="chatgpt-toolkit-form-group">
-              <label class="chatgpt-toolkit-form-label" for="${SETTINGS_INPUT_IDS.quotaMaxMessages}">${t("settings.quota.maxMessages.label")}</label>
-              <input type="number" min="1" max="10000" id="${SETTINGS_INPUT_IDS.quotaMaxMessages}" class="chatgpt-toolkit-input" value="${config.quotaMaxMessages}" />
-              <p class="chatgpt-toolkit-form-desc">${t("settings.quota.maxMessages.desc")}</p>
-            </div>
-            <div class="chatgpt-toolkit-form-group">
-              <label class="chatgpt-toolkit-form-label" for="${SETTINGS_INPUT_IDS.quotaResetIntervalMinutes}">${t("settings.quota.resetInterval.label")}</label>
-              <input type="number" min="1" max="10080" id="${SETTINGS_INPUT_IDS.quotaResetIntervalMinutes}" class="chatgpt-toolkit-input" value="${config.quotaResetIntervalMinutes}" />
-              <p class="chatgpt-toolkit-form-desc">${t("settings.quota.resetInterval.desc")}</p>
-            </div>
-            <div class="chatgpt-toolkit-form-group">
-              <label class="chatgpt-toolkit-form-label" for="${SETTINGS_INPUT_IDS.quotaWarningPercent}">${t("settings.quota.warningThreshold.label")}</label>
-              <input type="number" min="1" max="100" id="${SETTINGS_INPUT_IDS.quotaWarningPercent}" class="chatgpt-toolkit-input" value="${config.quotaWarningPercent}" />
-              <p class="chatgpt-toolkit-form-desc">${t("settings.quota.warningThreshold.desc")}</p>
-            </div>
-            <div class="chatgpt-toolkit-form-group">
-              <label class="chatgpt-toolkit-form-label" for="${SETTINGS_INPUT_IDS.quotaDangerRemaining}">${t("settings.quota.dangerRemaining.label")}</label>
-              <input type="number" min="0" max="1000" id="${SETTINGS_INPUT_IDS.quotaDangerRemaining}" class="chatgpt-toolkit-input" value="${config.quotaDangerRemaining}" />
-              <p class="chatgpt-toolkit-form-desc">${t("settings.quota.dangerRemaining.desc")}</p>
-            </div>
-          </div>
-        </div>
       </div>
       <div class="chatgpt-toolkit-prompt-footer">
         <span></span>
@@ -795,33 +694,11 @@ const renderSettingsModal = (modal, draftConfig = null) => {
       } else {
         getSettingsConfig(draft);
       }
-      if (typeof onQuotaConfigChanged === "function") {
-        onQuotaConfigChanged();
-      }
 
       if (typeof updateStatusByKey === "function") {
         updateStatusByKey("settings.saved", "success");
       }
       closeSettingsModal();
-    });
-  }
-
-  const presetSelect = modal.querySelector(`#${SETTINGS_INPUT_IDS.quotaPlanPreset}`);
-  if (presetSelect instanceof HTMLSelectElement) {
-    presetSelect.addEventListener("change", () => {
-      const preset = getQuotaPlanPreset(presetSelect.value);
-      const maxInput = document.getElementById(SETTINGS_INPUT_IDS.quotaMaxMessages);
-      const resetInput = document.getElementById(SETTINGS_INPUT_IDS.quotaResetIntervalMinutes);
-      const note = document.getElementById("toolkit-setting-quotaPresetNote");
-      if (Number.isFinite(preset.maxMessages) && maxInput instanceof HTMLInputElement) {
-        maxInput.value = String(preset.maxMessages);
-      }
-      if (Number.isFinite(preset.resetIntervalMinutes) && resetInput instanceof HTMLInputElement) {
-        resetInput.value = String(preset.resetIntervalMinutes);
-      }
-      if (note instanceof HTMLElement) {
-        note.textContent = getQuotaPresetNote(presetSelect.value);
-      }
     });
   }
 };

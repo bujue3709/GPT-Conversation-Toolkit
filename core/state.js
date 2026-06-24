@@ -9,10 +9,6 @@ const TOOLBAR_MINIMIZED_KEY = "chatgpt-toolkit-toolbar-minimized";
 const LANGUAGE_PREFERENCE_KEY = "chatgpt-toolkit-language";
 const TIMELINE_POSITION_KEY = "chatgpt-toolkit-timeline-position";
 const TIMELINE_VISIBLE_KEY = "chatgpt-toolkit-timeline-visible";
-const QUOTA_REMINDER_ID = "chatgpt-toolkit-quota-reminder";
-const QUOTA_STORAGE_KEY = "chatgpt-toolkit-quota-usage-v1";
-const QUOTA_POSITION_KEY = "chatgpt-toolkit-quota-position";
-const QUOTA_UI_STATE_KEY = "chatgpt-toolkit-quota-ui-state";
 const COLLAPSE_MEMORY_STORAGE_KEY = "chatgpt-toolkit-collapse-memory-v1";
 const COLLAPSE_MEMORY_LOCAL_FALLBACK_KEY = "chatgpt-toolkit-collapse-memory-fallback";
 let COLLAPSE_MEMORY_RETENTION_MS = 10 * 24 * 60 * 60 * 1000;
@@ -120,26 +116,6 @@ const timelineState = {
   dragging: false,
   refreshPending: false,
 };
-const quotaState = {
-  initialized: false,
-  config: null,
-  visible: true,
-  minimized: false,
-  position: null,
-  activeBucketKey: "",
-  snapshot: {
-    version: 1,
-    activeBucketKey: "",
-    buckets: {},
-  },
-  currentModelKey: "default",
-  officialResetAt: 0,
-  officialNoticeText: "",
-  pointerDown: false,
-  dragging: false,
-  refreshTimer: 0,
-  noticeScanTimer: 0,
-};
 const conversationIndexState = {
   conversationId: "",
   title: "",
@@ -222,51 +198,6 @@ const themeAttributeFilter = ["class", "data-theme", "style"];
 const TOOLKIT_BOOTSTRAP_FLAG = "__chatgptConversationToolkitBootstrapped";
 
 const TOOLKIT_CONFIG_KEY = "chatgpt-toolkit-config-v2";
-const QUOTA_PLAN_PRESETS = Object.freeze({
-  custom: {
-    labelKey: "quota.preset.custom",
-    maxMessages: null,
-    resetIntervalMinutes: null,
-    confidenceKey: "quota.preset.confidence.manual",
-  },
-  "free-gpt-5.5": {
-    labelKey: "quota.preset.freeGpt55",
-    maxMessages: null,
-    resetIntervalMinutes: 300,
-    confidenceKey: "quota.preset.confidence.windowOnly",
-  },
-  "plus-gpt-5.5": {
-    labelKey: "quota.preset.plusGpt55",
-    maxMessages: 160,
-    resetIntervalMinutes: 180,
-    confidenceKey: "quota.preset.confidence.official",
-  },
-  "go-gpt-5.5": {
-    labelKey: "quota.preset.goGpt55",
-    maxMessages: 160,
-    resetIntervalMinutes: 180,
-    confidenceKey: "quota.preset.confidence.official",
-  },
-  "go-thinking": {
-    labelKey: "quota.preset.goThinking",
-    maxMessages: 10,
-    resetIntervalMinutes: 300,
-    confidenceKey: "quota.preset.confidence.official",
-  },
-  "business-base": {
-    labelKey: "quota.preset.businessBase",
-    maxMessages: null,
-    resetIntervalMinutes: null,
-    confidenceKey: "quota.preset.confidence.unlimited",
-  },
-  "enterprise-base": {
-    labelKey: "quota.preset.enterpriseBase",
-    maxMessages: null,
-    resetIntervalMinutes: null,
-    confidenceKey: "quota.preset.confidence.workspace",
-  },
-});
-const QUOTA_PLAN_PRESET_VALUES = Object.freeze(Object.keys(QUOTA_PLAN_PRESETS));
 const TOOLKIT_CONFIG_DEFAULTS = Object.freeze({
   keepLatest: 20,
   autoReoptimizeBuffer: 10,
@@ -275,13 +206,6 @@ const TOOLKIT_CONFIG_DEFAULTS = Object.freeze({
   collapseMemoryRetentionDays: 10,
   messageMode: TOOLKIT_MESSAGE_MODE_LOADED,
   exportFormat: TOOLKIT_EXPORT_FORMAT_JSON,
-  quotaEnabled: true,
-  quotaPlanPreset: "custom",
-  quotaMaxMessages: 80,
-  quotaResetIntervalMinutes: 180,
-  quotaWarningPercent: 80,
-  quotaDangerRemaining: 5,
-  quotaCountMode: "network",
 });
 const TOOLKIT_CONFIG_LIMITS = Object.freeze({
   keepLatest: { min: 1, max: 1000 },
@@ -289,10 +213,6 @@ const TOOLKIT_CONFIG_LIMITS = Object.freeze({
   timelineVisibleNodeCapacity: { min: 1, max: 100 },
   timelineMaxNodes: { min: 1, max: 100 },
   collapseMemoryRetentionDays: { min: 1, max: 365 },
-  quotaMaxMessages: { min: 1, max: 10000 },
-  quotaResetIntervalMinutes: { min: 1, max: 10080 },
-  quotaWarningPercent: { min: 1, max: 100 },
-  quotaDangerRemaining: { min: 0, max: 1000 },
 });
 
 const normalizeToolkitConfigInteger = (value, fallback, limits) => {
@@ -309,76 +229,37 @@ const normalizeToolkitConfigInteger = (value, fallback, limits) => {
   return Math.min(Math.max(integerValue, limits.min), limits.max);
 };
 
-const normalizeQuotaPlanPreset = (value) =>
-  QUOTA_PLAN_PRESET_VALUES.includes(value) ? value : TOOLKIT_CONFIG_DEFAULTS.quotaPlanPreset;
-
-const getQuotaPlanPreset = (value) =>
-  QUOTA_PLAN_PRESETS[normalizeQuotaPlanPreset(value)] || QUOTA_PLAN_PRESETS.custom;
-
-const normalizeToolkitConfig = (config = {}) => {
-  const quotaPlanPreset = normalizeQuotaPlanPreset(config.quotaPlanPreset);
-  const quotaPreset = getQuotaPlanPreset(quotaPlanPreset);
-  return {
-    keepLatest: normalizeToolkitConfigInteger(
-      config.keepLatest,
-      TOOLKIT_CONFIG_DEFAULTS.keepLatest,
-      TOOLKIT_CONFIG_LIMITS.keepLatest,
-    ),
-    autoReoptimizeBuffer: normalizeToolkitConfigInteger(
-      config.autoReoptimizeBuffer,
-      TOOLKIT_CONFIG_DEFAULTS.autoReoptimizeBuffer,
-      TOOLKIT_CONFIG_LIMITS.autoReoptimizeBuffer,
-    ),
-    timelineVisibleNodeCapacity: normalizeToolkitConfigInteger(
-      config.timelineVisibleNodeCapacity,
-      TOOLKIT_CONFIG_DEFAULTS.timelineVisibleNodeCapacity,
-      TOOLKIT_CONFIG_LIMITS.timelineVisibleNodeCapacity,
-    ),
-    timelineMaxNodes: normalizeToolkitConfigInteger(
-      config.timelineMaxNodes,
-      TOOLKIT_CONFIG_DEFAULTS.timelineMaxNodes,
-      TOOLKIT_CONFIG_LIMITS.timelineMaxNodes,
-    ),
-    collapseMemoryRetentionDays: normalizeToolkitConfigInteger(
-      config.collapseMemoryRetentionDays,
-      TOOLKIT_CONFIG_DEFAULTS.collapseMemoryRetentionDays,
-      TOOLKIT_CONFIG_LIMITS.collapseMemoryRetentionDays,
-    ),
-    messageMode: TOOLKIT_CONFIG_DEFAULTS.messageMode,
-    exportFormat: TOOLKIT_EXPORT_FORMAT_VALUES.includes(config.exportFormat)
-      ? config.exportFormat
-      : TOOLKIT_CONFIG_DEFAULTS.exportFormat,
-    quotaEnabled:
-      typeof config.quotaEnabled === "boolean"
-        ? config.quotaEnabled
-        : TOOLKIT_CONFIG_DEFAULTS.quotaEnabled,
-    quotaPlanPreset,
-    quotaMaxMessages: normalizeToolkitConfigInteger(
-      config.quotaMaxMessages,
-      quotaPreset.maxMessages || TOOLKIT_CONFIG_DEFAULTS.quotaMaxMessages,
-      TOOLKIT_CONFIG_LIMITS.quotaMaxMessages,
-    ),
-    quotaResetIntervalMinutes: normalizeToolkitConfigInteger(
-      config.quotaResetIntervalMinutes,
-      quotaPreset.resetIntervalMinutes || TOOLKIT_CONFIG_DEFAULTS.quotaResetIntervalMinutes,
-      TOOLKIT_CONFIG_LIMITS.quotaResetIntervalMinutes,
-    ),
-    quotaWarningPercent: normalizeToolkitConfigInteger(
-      config.quotaWarningPercent,
-      TOOLKIT_CONFIG_DEFAULTS.quotaWarningPercent,
-      TOOLKIT_CONFIG_LIMITS.quotaWarningPercent,
-    ),
-    quotaDangerRemaining: normalizeToolkitConfigInteger(
-      config.quotaDangerRemaining,
-      TOOLKIT_CONFIG_DEFAULTS.quotaDangerRemaining,
-      TOOLKIT_CONFIG_LIMITS.quotaDangerRemaining,
-    ),
-    quotaCountMode:
-      config.quotaCountMode === "dom-fallback" || config.quotaCountMode === "network"
-        ? config.quotaCountMode
-        : TOOLKIT_CONFIG_DEFAULTS.quotaCountMode,
-  };
-};
+const normalizeToolkitConfig = (config = {}) => ({
+  keepLatest: normalizeToolkitConfigInteger(
+    config.keepLatest,
+    TOOLKIT_CONFIG_DEFAULTS.keepLatest,
+    TOOLKIT_CONFIG_LIMITS.keepLatest,
+  ),
+  autoReoptimizeBuffer: normalizeToolkitConfigInteger(
+    config.autoReoptimizeBuffer,
+    TOOLKIT_CONFIG_DEFAULTS.autoReoptimizeBuffer,
+    TOOLKIT_CONFIG_LIMITS.autoReoptimizeBuffer,
+  ),
+  timelineVisibleNodeCapacity: normalizeToolkitConfigInteger(
+    config.timelineVisibleNodeCapacity,
+    TOOLKIT_CONFIG_DEFAULTS.timelineVisibleNodeCapacity,
+    TOOLKIT_CONFIG_LIMITS.timelineVisibleNodeCapacity,
+  ),
+  timelineMaxNodes: normalizeToolkitConfigInteger(
+    config.timelineMaxNodes,
+    TOOLKIT_CONFIG_DEFAULTS.timelineMaxNodes,
+    TOOLKIT_CONFIG_LIMITS.timelineMaxNodes,
+  ),
+  collapseMemoryRetentionDays: normalizeToolkitConfigInteger(
+    config.collapseMemoryRetentionDays,
+    TOOLKIT_CONFIG_DEFAULTS.collapseMemoryRetentionDays,
+    TOOLKIT_CONFIG_LIMITS.collapseMemoryRetentionDays,
+  ),
+  messageMode: TOOLKIT_CONFIG_DEFAULTS.messageMode,
+  exportFormat: TOOLKIT_EXPORT_FORMAT_VALUES.includes(config.exportFormat)
+    ? config.exportFormat
+    : TOOLKIT_CONFIG_DEFAULTS.exportFormat,
+});
 
 const applyToolkitConfig = (config = {}) => {
   const normalized = normalizeToolkitConfig(config);
@@ -389,15 +270,6 @@ const applyToolkitConfig = (config = {}) => {
   COLLAPSE_MEMORY_RETENTION_MS = normalized.collapseMemoryRetentionDays * 24 * 60 * 60 * 1000;
   TOOLKIT_MESSAGE_MODE = normalized.messageMode;
   TOOLKIT_EXPORT_FORMAT = normalized.exportFormat;
-  quotaState.config = {
-    quotaEnabled: normalized.quotaEnabled,
-    quotaPlanPreset: normalized.quotaPlanPreset,
-    quotaMaxMessages: normalized.quotaMaxMessages,
-    quotaResetIntervalMinutes: normalized.quotaResetIntervalMinutes,
-    quotaWarningPercent: normalized.quotaWarningPercent,
-    quotaDangerRemaining: normalized.quotaDangerRemaining,
-    quotaCountMode: normalized.quotaCountMode,
-  };
   return normalized;
 };
 
@@ -410,7 +282,6 @@ const getToolkitConfig = () =>
     collapseMemoryRetentionDays: Math.floor(COLLAPSE_MEMORY_RETENTION_MS / 86400000),
     messageMode: TOOLKIT_MESSAGE_MODE,
     exportFormat: TOOLKIT_EXPORT_FORMAT,
-    ...(quotaState.config || {}),
   });
 
 const loadToolkitConfig = () => {

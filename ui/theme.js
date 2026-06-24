@@ -66,7 +66,6 @@ const applyToolkitTheme = (theme) => {
     document.getElementById(TOOLKIT_ID),
     document.getElementById(MINIMIZED_ID),
     document.getElementById(TIMELINE_ID),
-    document.getElementById(QUOTA_REMINDER_ID),
     document.getElementById(LATEX_COPY_ID),
     document.getElementById(PROMPT_MODAL_ID),
     document.getElementById("chatgpt-toolkit-settings-modal"),
