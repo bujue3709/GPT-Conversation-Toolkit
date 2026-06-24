@@ -159,6 +159,25 @@
     if (event.source !== window || event.data?.source !== MESSAGE_SOURCE) {
       return;
     }
+    if (event.data?.type === "quota-message-sent") {
+      try {
+        window.dispatchEvent(
+          new CustomEvent("chatgpt-toolkit-quota-message-sent", {
+            detail: {
+              conversationId: event.data.conversationId || "",
+              messageId: event.data.messageId || "",
+              parentMessageId: event.data.parentMessageId || "",
+              modelKey: event.data.modelKey || "default",
+              dedupeKey: event.data.dedupeKey || "",
+              sentAt: event.data.sentAt || Date.now(),
+              url: event.data.url || "",
+              href: event.data.href || window.location.href,
+            },
+          }),
+        );
+      } catch (error) {}
+      return;
+    }
     if (event.data?.type !== "conversation") {
       return;
     }

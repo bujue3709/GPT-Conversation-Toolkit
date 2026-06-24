@@ -129,6 +129,7 @@ if (!window[TOOLKIT_BOOTSTRAP_FLAG]) {
   initLatexCopy();
   syncCollapseMemoryForCurrentConversation({ triggerAuto: true, forceAuto: true });
   renderTimeline();
+  initQuotaReminder();
   setupResizeListener();
 
   let observerRafId = 0;
@@ -168,6 +169,7 @@ if (!window[TOOLKIT_BOOTSTRAP_FLAG]) {
           `#${TOOLKIT_ID}`,
           `#${MINIMIZED_ID}`,
           `#${TIMELINE_ID}`,
+          `#${QUOTA_REMINDER_ID}`,
           `#${PROMPT_MODAL_ID}`,
           `#${FOLDER_MANAGER_ID}`,
           `#${FOLDER_MENU_ID}`,
@@ -214,6 +216,7 @@ if (!window[TOOLKIT_BOOTSTRAP_FLAG]) {
         const toolbar = document.getElementById(TOOLKIT_ID);
         const minimizedButton = document.getElementById(MINIMIZED_ID);
         const timeline = document.getElementById(TIMELINE_ID);
+        const quotaReminder = document.getElementById(QUOTA_REMINDER_ID);
         const promptModal = document.getElementById(PROMPT_MODAL_ID);
 
         if (!toolbar) {
@@ -230,6 +233,10 @@ if (!window[TOOLKIT_BOOTSTRAP_FLAG]) {
           }
         } else if (timeline) {
           destroyTimeline();
+        }
+
+        if (quotaState.visible && !quotaReminder && typeof renderQuotaReminder === "function") {
+          renderQuotaReminder();
         }
 
         if (promptState.isOpen && !promptModal) {

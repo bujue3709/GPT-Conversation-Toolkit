@@ -78,6 +78,107 @@ const loadTimelinePosition = () => {
   }
 };
 
+const normalizeQuotaSnapshot = (snapshot) => {
+  const nextSnapshot =
+    snapshot && typeof snapshot === "object"
+      ? snapshot
+      : {
+          version: 1,
+          activeBucketKey: "",
+          buckets: {},
+        };
+  const buckets =
+    nextSnapshot.buckets && typeof nextSnapshot.buckets === "object"
+      ? nextSnapshot.buckets
+      : {};
+  return {
+    version: 1,
+    activeBucketKey:
+      typeof nextSnapshot.activeBucketKey === "string" ? nextSnapshot.activeBucketKey : "",
+    buckets,
+  };
+};
+
+const saveQuotaSnapshot = (snapshot) => {
+  try {
+    localStorage.setItem(QUOTA_STORAGE_KEY, JSON.stringify(normalizeQuotaSnapshot(snapshot)));
+  } catch (error) {
+    // Ignore storage write failures.
+  }
+};
+
+const loadQuotaSnapshot = () => {
+  try {
+    const stored = localStorage.getItem(QUOTA_STORAGE_KEY);
+    if (!stored) {
+      return normalizeQuotaSnapshot(null);
+    }
+    return normalizeQuotaSnapshot(JSON.parse(stored));
+  } catch (error) {
+    return normalizeQuotaSnapshot(null);
+  }
+};
+
+const saveQuotaPosition = (position) => {
+  try {
+    if (!position) {
+      localStorage.removeItem(QUOTA_POSITION_KEY);
+      return;
+    }
+    localStorage.setItem(QUOTA_POSITION_KEY, JSON.stringify(position));
+  } catch (error) {
+    // Ignore storage write failures.
+  }
+};
+
+const loadQuotaPosition = () => {
+  try {
+    const stored = localStorage.getItem(QUOTA_POSITION_KEY);
+    if (!stored) {
+      return null;
+    }
+    const parsed = JSON.parse(stored);
+    const left = Number(parsed?.left);
+    const top = Number(parsed?.top);
+    if (!Number.isFinite(left) || !Number.isFinite(top)) {
+      return null;
+    }
+    return { left, top };
+  } catch (error) {
+    return null;
+  }
+};
+
+const saveQuotaUiState = (uiState) => {
+  try {
+    localStorage.setItem(
+      QUOTA_UI_STATE_KEY,
+      JSON.stringify({
+        visible: uiState?.visible !== false,
+        minimized: !!uiState?.minimized,
+      }),
+    );
+  } catch (error) {
+    // Ignore storage write failures.
+  }
+};
+
+const loadQuotaUiState = () => {
+  try {
+    const stored = localStorage.getItem(QUOTA_UI_STATE_KEY);
+    if (!stored) {
+      return { visible: true, minimized: false };
+    }
+    const parsed = JSON.parse(stored);
+    return {
+      visible: parsed?.visible !== false,
+      minimized: !!parsed?.minimized,
+    };
+  } catch (error) {
+    return { visible: true, minimized: false };
+  }
+};
+
 const loadMinimizedPosition = () => {
   const stored = localStorage.getItem(POSITION_KEY);
   if (!stored) {

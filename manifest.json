@@ -43,6 +43,7 @@
         "features/search.js",
         "features/latex-copy.js",
         "features/timeline.js",
+        "features/quota-reminder.js",
         "features/prompt-library.js",
         "features/collapse.js",
         "ui/toolbar.js",
