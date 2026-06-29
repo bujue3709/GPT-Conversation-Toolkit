@@ -9,6 +9,8 @@ const FOLDER_DROPZONE_ATTR = "data-toolkit-folder-dropzone";
 const FOLDER_BOUND_ATTR = "data-toolkit-folder-bound";
 const FOLDER_MANAGER_BOUND_ATTR = "data-toolkit-folder-manager-bound";
 const FOLDER_NATIVE_LIST_ATTR = "data-toolkit-folder-native-list";
+const FOLDER_CONVERSATION_DRAG_ATTR = "data-toolkit-folder-draggable";
+const FOLDER_CONVERSATION_PREVIOUS_DRAGGABLE_ATTR = "data-toolkit-folder-previous-draggable";
 const FOLDER_HEADER_CLASS = "chatgpt-toolkit-folder-header";
 const FOLDER_EMPTY_CLASS = "chatgpt-toolkit-folder-empty";
 const FOLDER_DRAGGING_ATTR = "data-toolkit-folder-dragging";
@@ -17,6 +19,13 @@ const FOLDER_MISSING_SECTION_RETRY_LIMIT = 120;
 const FOLDER_MISSING_SECTION_RETRY_DELAY_MS = 180;
 const FOLDER_MISSING_SECTION_RETRY_SLOW_DELAY_MS = 520;
 const FOLDER_MISSING_SECTION_RETRY_HIDDEN_DELAY_MS = 2000;
+const FOLDER_CONVERSATION_DRAG_BLOCK_SELECTOR =
+  "button, input, textarea, select, option, [role='button'], [data-trailing-button], [data-folder-action], [contenteditable='true']";
+const FOLDER_POINTER_DRAG_GUARD_MS = 1200;
+
+let folderPointerDownDragBlocked = false;
+let folderPointerDownConversationId = "";
+let folderPointerDownAt = 0;
 
 const getSafeEventTarget = (event) => (event?.target instanceof Element ? event.target : null);
 
@@ -488,6 +497,94 @@ const getConversationItemFromTarget = (target) => {
   }
 
   return item;
+};
+
+const isConversationDragBlockedTarget = (target, conversationItem = null) => {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  const blockedTarget = target.closest(FOLDER_CONVERSATION_DRAG_BLOCK_SELECTOR);
+  if (!(blockedTarget instanceof Element)) {
+    return false;
+  }
+
+  if (conversationItem instanceof HTMLAnchorElement) {
+    return conversationItem.contains(blockedTarget);
+  }
+
+  return getConversationItemFromTarget(target) instanceof HTMLAnchorElement;
+};
+
+const syncConversationDragAttributes = (item) => {
+  if (!(item instanceof HTMLAnchorElement)) {
+    return;
+  }
+
+  if (!item.hasAttribute(FOLDER_CONVERSATION_DRAG_ATTR)) {
+    item.setAttribute(
+      FOLDER_CONVERSATION_PREVIOUS_DRAGGABLE_ATTR,
+      item.hasAttribute("draggable") ? item.getAttribute("draggable") || "" : "",
+    );
+    item.setAttribute(FOLDER_CONVERSATION_DRAG_ATTR, "1");
+  }
+
+  if (item.getAttribute("draggable") !== "true") {
+    item.setAttribute("draggable", "true");
+  }
+
+  item.querySelectorAll(FOLDER_CONVERSATION_DRAG_BLOCK_SELECTOR).forEach((node) => {
+    if (node instanceof HTMLElement && node.getAttribute("draggable") !== "false") {
+      node.setAttribute("draggable", "false");
+    }
+  });
+};
+
+const clearConversationDragAttributes = (item) => {
+  if (!(item instanceof HTMLAnchorElement) || !item.hasAttribute(FOLDER_CONVERSATION_DRAG_ATTR)) {
+    return;
+  }
+
+  const previousDraggable = item.getAttribute(FOLDER_CONVERSATION_PREVIOUS_DRAGGABLE_ATTR);
+  if (previousDraggable === null || previousDraggable === "") {
+    item.removeAttribute("draggable");
+  } else {
+    item.setAttribute("draggable", previousDraggable);
+  }
+  item.removeAttribute(FOLDER_CONVERSATION_DRAG_ATTR);
+  item.removeAttribute(FOLDER_CONVERSATION_PREVIOUS_DRAGGABLE_ATTR);
+};
+
+const trackFolderPointerDownDragGuard = (event) => {
+  const target = getSafeEventTarget(event);
+  const conversationItem = getConversationItemFromTarget(target);
+  if (conversationItem instanceof HTMLAnchorElement) {
+    syncConversationDragAttributes(conversationItem);
+  }
+  folderPointerDownAt = Date.now();
+  folderPointerDownConversationId =
+    conversationItem instanceof HTMLAnchorElement ? getConversationIdFromItem(conversationItem) : "";
+  folderPointerDownDragBlocked =
+    conversationItem instanceof HTMLAnchorElement && isConversationDragBlockedTarget(target, conversationItem);
+};
+
+const shouldBlockConversationDragStart = (event, conversationItem) => {
+  if (!(conversationItem instanceof HTMLAnchorElement)) {
+    return true;
+  }
+
+  const target = getSafeEventTarget(event);
+  if (isConversationDragBlockedTarget(target, conversationItem)) {
+    return true;
+  }
+
+  const conversationId = getConversationIdFromItem(conversationItem);
+  return (
+    folderPointerDownDragBlocked &&
+    conversationId &&
+    folderPointerDownConversationId === conversationId &&
+    Date.now() - folderPointerDownAt <= FOLDER_POINTER_DRAG_GUARD_MS
+  );
 };
 
 const getConversationIdFromItem = (item) => {
@@ -1645,6 +1742,7 @@ const clearHistoryPresentation = (history) => {
 
   getConversationItems(history).forEach((item) => {
     const presentationNode = getConversationPresentationNode(item, history);
+    clearConversationDragAttributes(item);
     clearConversationPresentationNode(item);
 
     if (!(presentationNode instanceof HTMLElement) || presentationNode === item) {
@@ -2432,6 +2530,7 @@ const renderFolders = () => {
         folderId: "",
         collapsed: false,
       };
+      syncConversationDragAttributes(item);
       const conversationId = getConversationIdFromItem(item);
       const presentationNode = getConversationPresentationNode(item, history) || item;
       const signature = createConversationPlanSignature(plan);
@@ -2594,6 +2693,10 @@ const handleFolderDragStart = (event) => {
   if (!(conversationItem instanceof HTMLAnchorElement)) {
     return;
   }
+  if (shouldBlockConversationDragStart(event, conversationItem)) {
+    event.preventDefault();
+    return;
+  }
 
   const conversationId = getConversationIdFromItem(conversationItem);
   if (!conversationId) {
@@ -2707,6 +2810,7 @@ const bindFolderGlobalEvents = () => {
 
   folderState.initialized = true;
 
+  document.addEventListener("pointerdown", trackFolderPointerDownDragGuard, true);
   document.addEventListener("dragstart", handleFolderDragStart, true);
   document.addEventListener("dragover", handleFolderDragOver, true);
   document.addEventListener("drop", handleFolderDrop, true);

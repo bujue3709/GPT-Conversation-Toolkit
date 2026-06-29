@@ -1813,6 +1813,14 @@ html[data-toolkit-folder-dragging="1"] .chatgpt-toolkit-folder-menu-btn:hover {
   display: contents;
 }
 
+#history[data-toolkit-folder-root="1"] a[data-toolkit-folder-draggable="1"][href*="/c/"] {
+  -webkit-user-drag: element;
+}
+
+html[data-toolkit-folder-dragging="1"] #history[data-toolkit-folder-root="1"] a[data-toolkit-folder-draggable="1"][href*="/c/"] {
+  cursor: grabbing;
+}
+
 #history[data-toolkit-folder-root="1"] > .chatgpt-toolkit-folder-header,
 #history[data-toolkit-folder-root="1"] > .chatgpt-toolkit-folder-empty {
   margin: 0 8px;
