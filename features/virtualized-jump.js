@@ -1035,6 +1035,11 @@ const getRenderedBoundaryMessageNode = (direction, renderedWindow = getRenderedM
 
 const boundaryProbe = async (direction, options = {}) => {
   const normalizedDirection = normalizeVirtualJumpDirection(direction);
+  const isActive =
+    typeof options.isActive === "function" ? options.isActive : () => true;
+  if (!isActive()) {
+    return false;
+  }
   const beforeWindow = getRenderedMessageWindow();
   const boundaryNode = getRenderedBoundaryMessageNode(normalizedDirection, beforeWindow);
   if (!(boundaryNode instanceof HTMLElement)) {
@@ -1051,7 +1056,13 @@ const boundaryProbe = async (direction, options = {}) => {
     beforeWindow.messageSignature,
     options.boundaryTimeoutMs || VIRTUAL_JUMP_BOUNDARY_MUTATION_TIMEOUT_MS,
   );
+  if (!isActive()) {
+    return false;
+  }
   await waitForVirtualListSettle(options.settleDelayMs);
+  if (!isActive()) {
+    return false;
+  }
 
   const afterWindow = getRenderedMessageWindow();
   if (afterWindow.messageSignature !== beforeWindow.messageSignature) {
@@ -1279,6 +1290,7 @@ const jumpToConversationMessage = async (target, options = {}) => {
       const boundaryMoved = await boundaryProbe(direction, {
         settleDelayMs: options.settleDelayMs,
         boundaryTimeoutMs: options.boundaryTimeoutMs,
+        isActive,
       });
       await sleepForVirtualJump(getVirtualJumpRetryDelayMs(options.retryDelayMs));
       if (!isActive()) {

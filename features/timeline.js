@@ -15,6 +15,17 @@ let timelineJumpResolveTimer = null;
 let timelineJumpScrollTimer = null;
 let timelineProgrammaticJumpToken = 0;
 let timelineProgrammaticJumpUntil = 0;
+let timelineJumpUserIntentCleanup = null;
+const TIMELINE_SCROLL_INTENT_KEYS = new Set([
+  "ArrowDown",
+  "ArrowUp",
+  "End",
+  "Home",
+  "PageDown",
+  "PageUp",
+  " ",
+  "Spacebar",
+]);
 
 const getTimelineElements = () => {
   const timeline = document.getElementById(TIMELINE_ID);
@@ -353,9 +364,84 @@ const compressTimelineWheelDelta = (delta) => {
 const isTimelineProgrammaticJumpLocked = () =>
   timelineProgrammaticJumpUntil > 0 && Date.now() < timelineProgrammaticJumpUntil;
 
+const clearTimelineJumpUserIntentListeners = () => {
+  if (typeof timelineJumpUserIntentCleanup === "function") {
+    timelineJumpUserIntentCleanup();
+  }
+  timelineJumpUserIntentCleanup = null;
+};
+
+const isTimelineScrollIntentKeyEvent = (event) => {
+  if (!(event instanceof KeyboardEvent) || !TIMELINE_SCROLL_INTENT_KEYS.has(event.key)) {
+    return false;
+  }
+
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) {
+    return true;
+  }
+  return !(
+    target.isContentEditable ||
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement
+  );
+};
+
+const cancelTimelineProgrammaticJump = () => {
+  if (timelineProgrammaticJumpUntil <= 0) {
+    return;
+  }
+
+  timelineProgrammaticJumpToken += 1;
+  timelineProgrammaticJumpUntil = 0;
+  clearTimelineJumpUserIntentListeners();
+  clearTimelineJumpResolveTimer();
+  clearTimelineJumpScrollTimer();
+  if (typeof cancelToolkitVirtualJump === "function") {
+    cancelToolkitVirtualJump();
+  }
+  hideTimelineHint();
+
+  const shouldRefresh = timelineState.refreshPending;
+  timelineState.refreshPending = false;
+  if (shouldRefresh) {
+    scheduleTimelineRefresh();
+  }
+};
+
+const bindTimelineJumpUserIntentListeners = () => {
+  clearTimelineJumpUserIntentListeners();
+
+  const cancelOnPointerIntent = (event) => {
+    if (event.isTrusted) {
+      cancelTimelineProgrammaticJump();
+    }
+  };
+  const cancelOnKeyIntent = (event) => {
+    if (event.isTrusted && isTimelineScrollIntentKeyEvent(event)) {
+      cancelTimelineProgrammaticJump();
+    }
+  };
+  const passiveCapture = { capture: true, passive: true };
+
+  window.addEventListener("wheel", cancelOnPointerIntent, passiveCapture);
+  window.addEventListener("touchstart", cancelOnPointerIntent, passiveCapture);
+  window.addEventListener("pointerdown", cancelOnPointerIntent, passiveCapture);
+  window.addEventListener("keydown", cancelOnKeyIntent, true);
+
+  timelineJumpUserIntentCleanup = () => {
+    window.removeEventListener("wheel", cancelOnPointerIntent, true);
+    window.removeEventListener("touchstart", cancelOnPointerIntent, true);
+    window.removeEventListener("pointerdown", cancelOnPointerIntent, true);
+    window.removeEventListener("keydown", cancelOnKeyIntent, true);
+  };
+};
+
 const beginTimelineProgrammaticJump = () => {
   timelineProgrammaticJumpToken += 1;
   timelineProgrammaticJumpUntil = Date.now() + TIMELINE_PROGRAMMATIC_JUMP_LOCK_MS;
+  bindTimelineJumpUserIntentListeners();
   return timelineProgrammaticJumpToken;
 };
 
@@ -369,6 +455,7 @@ const finishTimelineProgrammaticJump = (token) => {
   if (token === timelineProgrammaticJumpToken) {
     const shouldRefresh = timelineState.refreshPending;
     timelineProgrammaticJumpUntil = 0;
+    clearTimelineJumpUserIntentListeners();
     if (shouldRefresh) {
       timelineState.refreshPending = false;
       scheduleTimelineRefresh();
@@ -1674,6 +1761,8 @@ const setTimelineScrollListenerEnabled = (enabled) => {
 };
 
 const destroyTimeline = () => {
+  cancelTimelineProgrammaticJump();
+  clearTimelineJumpUserIntentListeners();
   clearTimelineJumpResolveTimer();
   clearTimelineJumpScrollTimer();
   clearTimelineRefreshTimer();
