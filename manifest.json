@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Conversation Toolkit",
-  "version": "1.3.0",
-  "description": "Optimize long ChatGPT conversations and export full sessions with one click.",
+  "version": "1.4.0",
+  "description": "Export full or selected ChatGPT conversation turns, search long threads, and navigate with a timeline.",
   "icons": {
     "16": "image/icon16.png",
     "48": "image/icon48.png",
@@ -38,6 +38,7 @@
         "features/export-download.js",
         "features/export-dom-fallback.js",
         "features/export.js",
+        "features/export-selection.js",
         "ui/theme.js",
         "features/folders.js",
         "features/search.js",

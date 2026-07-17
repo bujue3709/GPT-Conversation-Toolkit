@@ -285,7 +285,7 @@ const buildToolbar = () => {
 
     const actionHandlers = {
       minimize: () => minimizeToolbar(),
-      export: () => exportMessages(),
+      export: () => void openExportSelectionModal(),
       "prompt-library": () => void openPromptModal(),
       "timeline-toggle": () => toggleTimelineVisibility(),
       settings: () => openSettingsModal(),
@@ -607,6 +607,7 @@ const openToolkitLink = (url) => {
 const SETTINGS_MODAL_ID = "chatgpt-toolkit-settings-modal";
 const SETTINGS_INPUT_IDS = Object.freeze({
   exportFormat: "toolkit-setting-exportFormat",
+  exportRole: "toolkit-setting-exportRole",
 });
 
 const getSettingsModal = () => document.getElementById(SETTINGS_MODAL_ID);
@@ -620,6 +621,7 @@ const closeSettingsModal = () => {
 
 const getSettingsFallbackConfig = () => ({
   exportFormat: TOOLKIT_EXPORT_FORMAT || TOOLKIT_EXPORT_FORMAT_JSON,
+  exportRole: TOOLKIT_EXPORT_ROLE || TOOLKIT_EXPORT_ROLE_ALL,
 });
 
 const getSettingsConfig = (config) => {
@@ -642,6 +644,7 @@ const readSettingsInputValue = (id) => {
 const readSettingsDraft = () => {
   const draft = {
     exportFormat: readSettingsInputValue(SETTINGS_INPUT_IDS.exportFormat),
+    exportRole: readSettingsInputValue(SETTINGS_INPUT_IDS.exportRole),
   };
   return Object.values(draft).some((value) => value !== undefined) ? draft : null;
 };
@@ -674,6 +677,18 @@ const renderSettingsModal = (modal, draftConfig = null) => {
             </option>
           </select>
           <p class="chatgpt-toolkit-form-desc">${t("settings.exportFormat.desc")}</p>
+        </div>
+        <div class="chatgpt-toolkit-form-group">
+          <label class="chatgpt-toolkit-form-label" for="${SETTINGS_INPUT_IDS.exportRole}">${t("settings.exportRole.label")}</label>
+          <select id="${SETTINGS_INPUT_IDS.exportRole}" class="chatgpt-toolkit-input">
+            <option value="${TOOLKIT_EXPORT_ROLE_ALL}"${config.exportRole === TOOLKIT_EXPORT_ROLE_ALL ? " selected" : ""}>
+              ${t("settings.exportRole.all")}
+            </option>
+            <option value="${TOOLKIT_EXPORT_ROLE_ASSISTANT}"${config.exportRole === TOOLKIT_EXPORT_ROLE_ASSISTANT ? " selected" : ""}>
+              ${t("settings.exportRole.assistant")}
+            </option>
+          </select>
+          <p class="chatgpt-toolkit-form-desc">${t("settings.exportRole.desc")}</p>
         </div>
       </div>
       <div class="chatgpt-toolkit-prompt-footer">

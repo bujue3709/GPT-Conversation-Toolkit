@@ -6,6 +6,17 @@ A browser extension for `ChatGPT Web` focused on full-session export, in-page se
 
 Current active maintainer: `bujue3709` (primary / sole active maintainer)
 
+Current version: `v1.4.0`
+
+## What's New in v1.4.0 (2026-07-17)
+
+- Added a selective export dialog for exporting the full conversation or any chosen turns.
+- Added a GPT-answers-only filter that can be saved as the default export content.
+- Turn selection supports select all, invert, clear, `Shift` range selection, and 50-turn pagination.
+- Falls back to loaded/cached messages with a clear partial-data warning when API conversation data is unavailable.
+- Filtered JSON exports include source positions and selection metadata without leaking the complete raw conversation payload.
+- Selection controls now update only the affected UI, eliminating dialog flashes during checkbox, select, and pagination interactions.
+
 ## ChatGPT Virtualized List Impact (Important)
 
 Recent ChatGPT Web versions use a virtualized list in the conversation area:
@@ -34,7 +45,7 @@ Impact on this extension:
 ## Feature Highlights
 
 - Long conversation cleanup: deprecated legacy collapse behavior. ChatGPT Web's virtualized list already controls DOM size, so the extension no longer needs to hide older messages.
-- Full export: export the current conversation as `.json`, `.txt`, or `.md`; the format can be selected in Settings.
+- Flexible export: export all or selected conversation turns as `.json`, `.txt`, or `.md`, with an option to keep only GPT answers.
 - In-page search: search within the current conversation, highlight matches, and jump between results. Deep messages are positioned through the virtualized-jump flow.
 - Prompt library: add, delete, search, categorize, sort, import JSON, export JSON, and copy prompts with one click.
 - Settings panel: tweak core preferences locally via a native-style modal, supporting real-time variable tuning and auto-persistence.
@@ -42,7 +53,7 @@ Impact on this extension:
 - Timeline navigation: generate user-message timeline nodes from API conversation data, preview them, follow viewport activation, move the timeline panel around, and jump to far nodes.
 - Conversation folders: manage chat folders above the native “Your chats” list without replacing native conversation nodes.
 - Multilingual UI: currently supports Chinese and English, auto-detects the browser language, falls back to English when no match is available, and can be changed manually from the toolbar.
-- Theme sync: the toolbar, timeline, prompt modal, and folder UI follow ChatGPT light/dark appearance.
+- Theme sync: the toolbar, timeline, prompt modal, export dialog, and folder UI follow ChatGPT light/dark appearance.
 - Draggable floating UI: the minimized toolbar button and timeline can both be dragged.
 
 ## Installation
@@ -81,7 +92,7 @@ Available actions:
 
 - Optimize long conversations (legacy, deprecated, no longer recommended)
 - Restore hidden messages
-- Export the current conversation
+- Export all or selected turns, with an optional GPT-only filter
 - Open the prompt library
 - Show or hide the timeline
 - Search messages
@@ -117,9 +128,12 @@ The toolbar footer also includes two lightweight links:
 
 ### Export
 
-- “Export” downloads the current conversation using the format selected in Settings.
-- Available export formats are `.json`, `.txt`, and `.md`; `.json` is the default.
+- “Export” lets you choose the full conversation or selected turns, and optionally export GPT answers only.
+- Selected-turn mode supports select all, invert, clear, `Shift` range selection, and pagination while preserving selections across pages.
+- The footer shows the resulting turn and message counts, and disables export when no messages remain after filtering.
+- Settings control the default export format and content; available formats are `.json`, `.txt`, and `.md`.
 - Export prefers API conversation data, so it can still export the full conversation even when only part of the virtualized DOM is mounted.
+- If API data is unavailable, export falls back to loaded/cached messages and displays a partial-data warning.
 
 ### Search
 
@@ -186,6 +200,9 @@ The toolbar footer also includes two lightweight links:
   - `.json`
   - `.txt`
   - `.md`
+- Allows you to select the default export content:
+  - user questions + GPT answers
+  - GPT answers only
 - After clicking "Save", changes apply immediately without a page refresh and automatically persist to local storage.
 - The modal natively adapts to the ChatGPT light/dark theme dynamically.
 
@@ -207,6 +224,7 @@ core/
 features/
   collapse.js
   export.js
+  export-selection.js
   folders.js
   search.js
   latex-copy.js
@@ -244,6 +262,8 @@ manifest.json
   Deprecated legacy long-conversation collapse and restore behavior, kept only for compatibility with older collapsed states.
 - [features/export.js](./features/export.js)
   Conversation export.
+- [features/export-selection.js](./features/export-selection.js)
+  Turn selection, role filtering, pagination, and selective export.
 - [features/folders.js](./features/folders.js)
   Sidebar folder management, drag classification, folder sorting, and local restore.
 - [features/search.js](./features/search.js)
@@ -285,6 +305,8 @@ Key fields:
 - `COLLAPSE_AUTO_REOPTIMIZE_BUFFER`: legacy auto-cleanup buffer; the cleanup feature is deprecated
 - `TIMELINE_VISIBLE_NODE_CAPACITY`: approximate number of timeline nodes visible in one screenful
 - `TIMELINE_MAX_NODES`: maximum sampled timeline node count
+- `exportFormat`: default export format; supports `json`, `txt`, and `md`
+- `exportRole`: default export content; supports `all` or `assistant`
 
 ## Exported Conversation JSON
 
@@ -292,6 +314,10 @@ Key fields:
 {
   "exportedAt": "2026-03-13T08:30:00.000Z",
   "url": "https://chatgpt.com/c/xxxxxxxx",
+  "exportScope": "all",
+  "roleFilter": "all",
+  "sourceMessageCount": 2,
+  "selectedTurnCount": 1,
   "messageCount": 2,
   "messages": [
     {
@@ -317,6 +343,11 @@ Field notes:
 - `messages[].index`: message order
 - `messages[].role`: usually `user` or `assistant`
 - `messages[].text`: plain text content
+- `exportScope`: export range, either `all` or `selected`
+- `roleFilter`: role filter, either `all` or `assistant`
+- `sourceMessageCount`: message count before filtering
+- `selectedTurnCount`: number of included conversation turns
+- `messages[].sourceIndex`: original conversation position for filtered exports
 
 ## Prompt Library JSON
 

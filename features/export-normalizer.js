@@ -3,6 +3,8 @@
  */
 const EXPORT_SCHEMA_VERSION = 1;
 const EXPORT_BRANCH_MODE_ACTIVE = "active";
+const EXPORT_SCOPE_ALL = "all";
+const EXPORT_SCOPE_SELECTED = "selected";
 
 const cloneExportJsonValue = (value) => {
   if (value === undefined) {
@@ -103,6 +105,104 @@ const normalizeExportMessages = (messages) => {
     normalizedMessages.push(normalized);
   });
   return normalizedMessages;
+};
+
+const groupExportMessagesIntoTurns = (messages) => {
+  const turns = [];
+  let currentTurn = null;
+
+  (Array.isArray(messages) ? messages : []).forEach((message, messageOffset) => {
+    const role = message?.role || "unknown";
+    if (role === "user" || !currentTurn) {
+      currentTurn = {
+        id: `turn-${turns.length + 1}`,
+        order: turns.length + 1,
+        messages: [],
+        userMessages: [],
+        assistantMessages: [],
+      };
+      turns.push(currentTurn);
+    }
+
+    const sourceIndex = Number.isFinite(message?.sourceIndex)
+      ? message.sourceIndex
+      : Number.isFinite(message?.index)
+        ? message.index
+        : messageOffset + 1;
+    const turnMessage = { message, sourceIndex };
+    currentTurn.messages.push(turnMessage);
+    if (role === "user") {
+      currentTurn.userMessages.push(turnMessage);
+    } else if (role === "assistant") {
+      currentTurn.assistantMessages.push(turnMessage);
+    }
+  });
+
+  return turns;
+};
+
+const cloneExportMessageForSelection = (message, index, sourceIndex, includeSourceIndex) => {
+  const cloned = {
+    ...(message || {}),
+    index,
+  };
+  if (includeSourceIndex) {
+    cloned.sourceIndex = sourceIndex;
+  }
+  if (typeof message?.__markdown === "string") {
+    Object.defineProperty(cloned, "__markdown", {
+      configurable: true,
+      enumerable: false,
+      value: message.__markdown,
+    });
+  }
+  return cloned;
+};
+
+const applyExportSelection = (payload, options = {}) => {
+  const sourceMessages = Array.isArray(payload?.messages) ? payload.messages : [];
+  const turns = groupExportMessagesIntoTurns(sourceMessages);
+  const scope = options.scope === EXPORT_SCOPE_SELECTED
+    ? EXPORT_SCOPE_SELECTED
+    : EXPORT_SCOPE_ALL;
+  const roleFilter = options.roleFilter === TOOLKIT_EXPORT_ROLE_ASSISTANT
+    ? TOOLKIT_EXPORT_ROLE_ASSISTANT
+    : TOOLKIT_EXPORT_ROLE_ALL;
+  const selectedTurnIds = new Set(
+    Array.isArray(options.selectedTurnIds)
+      ? options.selectedTurnIds.map((turnId) => String(turnId))
+      : [],
+  );
+  const includedTurns = scope === EXPORT_SCOPE_SELECTED
+    ? turns.filter((turn) => selectedTurnIds.has(turn.id))
+    : turns;
+  const includeSourceIndex =
+    scope === EXPORT_SCOPE_SELECTED || roleFilter === TOOLKIT_EXPORT_ROLE_ASSISTANT;
+  const filteredMessages = includedTurns
+    .flatMap((turn) => turn.messages)
+    .filter(({ message }) =>
+      roleFilter === TOOLKIT_EXPORT_ROLE_ASSISTANT
+        ? message?.role === "assistant"
+        : true,
+    )
+    .map(({ message, sourceIndex }, index) =>
+      cloneExportMessageForSelection(message, index + 1, sourceIndex, includeSourceIndex),
+    );
+
+  const selectedPayload = {
+    ...(payload || {}),
+    exportScope: scope,
+    roleFilter,
+    sourceMessageCount: sourceMessages.length,
+    selectedTurnCount: includedTurns.length,
+    messageCount: filteredMessages.length,
+    messages: filteredMessages,
+  };
+  if (includeSourceIndex && selectedPayload.rawIncluded) {
+    delete selectedPayload.raw;
+    selectedPayload.rawIncluded = false;
+  }
+  return selectedPayload;
 };
 
 const buildConversationExportPayload = ({

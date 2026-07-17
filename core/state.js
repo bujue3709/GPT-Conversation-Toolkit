@@ -30,6 +30,13 @@ const TOOLKIT_EXPORT_FORMAT_VALUES = Object.freeze([
   TOOLKIT_EXPORT_FORMAT_MARKDOWN,
 ]);
 let TOOLKIT_EXPORT_FORMAT = TOOLKIT_EXPORT_FORMAT_JSON;
+const TOOLKIT_EXPORT_ROLE_ALL = "all";
+const TOOLKIT_EXPORT_ROLE_ASSISTANT = "assistant";
+const TOOLKIT_EXPORT_ROLE_VALUES = Object.freeze([
+  TOOLKIT_EXPORT_ROLE_ALL,
+  TOOLKIT_EXPORT_ROLE_ASSISTANT,
+]);
+let TOOLKIT_EXPORT_ROLE = TOOLKIT_EXPORT_ROLE_ALL;
 const THEME_ATTR = "data-toolkit-theme";
 const TIMELINE_ID = "chatgpt-conversation-toolkit-timeline";
 const TIMELINE_TRACK_ID = "chatgpt-conversation-toolkit-timeline-track";
@@ -206,6 +213,7 @@ const TOOLKIT_CONFIG_DEFAULTS = Object.freeze({
   collapseMemoryRetentionDays: 10,
   messageMode: TOOLKIT_MESSAGE_MODE_LOADED,
   exportFormat: TOOLKIT_EXPORT_FORMAT_JSON,
+  exportRole: TOOLKIT_EXPORT_ROLE_ALL,
 });
 const TOOLKIT_CONFIG_LIMITS = Object.freeze({
   keepLatest: { min: 1, max: 1000 },
@@ -259,6 +267,9 @@ const normalizeToolkitConfig = (config = {}) => ({
   exportFormat: TOOLKIT_EXPORT_FORMAT_VALUES.includes(config.exportFormat)
     ? config.exportFormat
     : TOOLKIT_CONFIG_DEFAULTS.exportFormat,
+  exportRole: TOOLKIT_EXPORT_ROLE_VALUES.includes(config.exportRole)
+    ? config.exportRole
+    : TOOLKIT_CONFIG_DEFAULTS.exportRole,
 });
 
 const applyToolkitConfig = (config = {}) => {
@@ -270,6 +281,7 @@ const applyToolkitConfig = (config = {}) => {
   COLLAPSE_MEMORY_RETENTION_MS = normalized.collapseMemoryRetentionDays * 24 * 60 * 60 * 1000;
   TOOLKIT_MESSAGE_MODE = normalized.messageMode;
   TOOLKIT_EXPORT_FORMAT = normalized.exportFormat;
+  TOOLKIT_EXPORT_ROLE = normalized.exportRole;
   return normalized;
 };
 
@@ -282,6 +294,7 @@ const getToolkitConfig = () =>
     collapseMemoryRetentionDays: Math.floor(COLLAPSE_MEMORY_RETENTION_MS / 86400000),
     messageMode: TOOLKIT_MESSAGE_MODE,
     exportFormat: TOOLKIT_EXPORT_FORMAT,
+    exportRole: TOOLKIT_EXPORT_ROLE,
   });
 
 const loadToolkitConfig = () => {
