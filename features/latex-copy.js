@@ -3,7 +3,15 @@
  */
 const LATEX_COPY_VISIBLE_CLASS = "is-visible";
 const LATEX_COPY_HIDE_DELAY_MS = 90;
-const LATEX_FORMULA_SELECTOR = ".katex-display, .katex, mjx-container, math";
+const LATEX_FORMULA_SELECTOR = [
+  '[role="math"]',
+  "[data-math-source]",
+  ".katex-display",
+  ".katex",
+  "mjx-container",
+  "math",
+].join(", ");
+const LATEX_SOURCE_CONTAINER_SELECTOR = '[data-math-source], [role="math"]';
 const LATEX_TOOLKIT_ROOT_SELECTOR = [
   `#${TOOLKIT_ID}`,
   `#${MINIMIZED_ID}`,
@@ -71,6 +79,14 @@ const resolveFormulaElement = (target) => {
   let formula = target.closest(LATEX_FORMULA_SELECTOR);
   if (!(formula instanceof Element)) {
     return null;
+  }
+
+  // Current ChatGPT pages keep the source on a semantic wrapper outside the
+  // generated KaTeX DOM. Prefer that wrapper even when the pointer is over a
+  // nearer .katex/.katex-display descendant.
+  const sourceContainer = formula.closest(LATEX_SOURCE_CONTAINER_SELECTOR);
+  if (sourceContainer instanceof Element) {
+    formula = sourceContainer;
   }
 
   if (formula.matches("math")) {
@@ -150,16 +166,28 @@ const extractLatexFromFormula = (formula) => {
     return "";
   }
 
-  const attrCandidates = [
-    formula.getAttribute("data-latex"),
-    formula.getAttribute("data-tex"),
-    formula.getAttribute("data-math-text"),
-    formula.getAttribute("data-math"),
-  ];
-  for (const candidate of attrCandidates) {
-    const normalized = toLatexText(candidate);
-    if (normalized) {
-      return normalized;
+  const sourceElements = [formula];
+  const closestSourceContainer = formula.closest(LATEX_SOURCE_CONTAINER_SELECTOR);
+  const nestedSourceContainer = formula.querySelector(LATEX_SOURCE_CONTAINER_SELECTOR);
+  for (const element of [closestSourceContainer, nestedSourceContainer]) {
+    if (element instanceof Element && !sourceElements.includes(element)) {
+      sourceElements.push(element);
+    }
+  }
+
+  for (const sourceElement of sourceElements) {
+    const attrCandidates = [
+      sourceElement.getAttribute("data-math-source"),
+      sourceElement.getAttribute("data-latex"),
+      sourceElement.getAttribute("data-tex"),
+      sourceElement.getAttribute("data-math-text"),
+      sourceElement.getAttribute("data-math"),
+    ];
+    for (const candidate of attrCandidates) {
+      const normalized = toLatexText(candidate);
+      if (normalized) {
+        return normalized;
+      }
     }
   }
 
@@ -183,12 +211,35 @@ const extractLatexFromFormula = (formula) => {
     }
   }
 
-  const rootAria = toLatexText(formula.getAttribute("aria-label"));
-  if (rootAria) {
-    return rootAria;
+  for (const sourceElement of sourceElements) {
+    const ariaLabel = toLatexText(sourceElement.getAttribute("aria-label"));
+    if (ariaLabel) {
+      return ariaLabel;
+    }
   }
 
   return "";
+};
+
+const formatLatexForCopy = (latex, format = TOOLKIT_LATEX_COPY_FORMAT) => {
+  const source = toLatexText(latex);
+  if (!source) {
+    return "";
+  }
+
+  switch (format) {
+    case TOOLKIT_LATEX_COPY_FORMAT_MARKDOWN_INLINE:
+      return `$${source}$`;
+    case TOOLKIT_LATEX_COPY_FORMAT_MARKDOWN_BLOCK:
+      return `$$\n${source}\n$$`;
+    case TOOLKIT_LATEX_COPY_FORMAT_LATEX_INLINE:
+      return `\\(${source}\\)`;
+    case TOOLKIT_LATEX_COPY_FORMAT_LATEX_DISPLAY:
+      return `\\[\n${source}\n\\]`;
+    case TOOLKIT_LATEX_COPY_FORMAT_RAW:
+    default:
+      return source;
+  }
 };
 
 const copyLatexText = async (text) => {
@@ -235,7 +286,8 @@ const handleLatexCopyClick = async (event) => {
     return;
   }
 
-  const copied = await copyLatexText(latex);
+  const copiedText = formatLatexForCopy(latex);
+  const copied = await copyLatexText(copiedText);
   if (copied) {
     updateStatusByKey("status.latexCopyDone", "success");
     return;

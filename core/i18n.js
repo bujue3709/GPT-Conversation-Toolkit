@@ -197,6 +197,13 @@ const I18N_MESSAGES = {
     "settings.exportRole.desc": "Choose whether exports include both sides or only GPT answers.",
     "settings.exportRole.all": "User questions + GPT answers",
     "settings.exportRole.assistant": "GPT answers only",
+    "settings.latexCopyFormat.label": "Formula Copy Format",
+    "settings.latexCopyFormat.desc": "Choose the wrapper added when copying a rendered formula. Markdown display is recommended for Obsidian.",
+    "settings.latexCopyFormat.raw": "Raw LaTeX source (default)",
+    "settings.latexCopyFormat.markdownInline": "Markdown inline ($...$)",
+    "settings.latexCopyFormat.markdownBlock": "Markdown display ($$...$$)",
+    "settings.latexCopyFormat.latexInline": "LaTeX inline (\\(...\\))",
+    "settings.latexCopyFormat.latexDisplay": "LaTeX display (\\[...\\])",
   },
   "zh-CN": {
     "language.label": "语言",
@@ -383,6 +390,13 @@ const I18N_MESSAGES = {
     "settings.exportRole.desc": "设置导出时包含完整问答，或只包含 GPT 回答。",
     "settings.exportRole.all": "用户提问 + GPT 回答",
     "settings.exportRole.assistant": "仅 GPT 回答",
+    "settings.latexCopyFormat.label": "公式复制格式",
+    "settings.latexCopyFormat.desc": "选择复制渲染公式时自动添加的定界符；粘贴到 Obsidian 推荐使用 Markdown 块级格式。",
+    "settings.latexCopyFormat.raw": "纯 LaTeX 源码（默认）",
+    "settings.latexCopyFormat.markdownInline": "Markdown 行内（$...$）",
+    "settings.latexCopyFormat.markdownBlock": "Markdown 块级（$$...$$）",
+    "settings.latexCopyFormat.latexInline": "LaTeX 行内（\\(...\\)）",
+    "settings.latexCopyFormat.latexDisplay": "LaTeX 展示（\\[...\\]）",
   },
 };
 

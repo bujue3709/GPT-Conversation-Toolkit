@@ -37,6 +37,19 @@ const TOOLKIT_EXPORT_ROLE_VALUES = Object.freeze([
   TOOLKIT_EXPORT_ROLE_ASSISTANT,
 ]);
 let TOOLKIT_EXPORT_ROLE = TOOLKIT_EXPORT_ROLE_ALL;
+const TOOLKIT_LATEX_COPY_FORMAT_RAW = "raw";
+const TOOLKIT_LATEX_COPY_FORMAT_MARKDOWN_INLINE = "markdown-inline";
+const TOOLKIT_LATEX_COPY_FORMAT_MARKDOWN_BLOCK = "markdown-block";
+const TOOLKIT_LATEX_COPY_FORMAT_LATEX_INLINE = "latex-inline";
+const TOOLKIT_LATEX_COPY_FORMAT_LATEX_DISPLAY = "latex-display";
+const TOOLKIT_LATEX_COPY_FORMAT_VALUES = Object.freeze([
+  TOOLKIT_LATEX_COPY_FORMAT_RAW,
+  TOOLKIT_LATEX_COPY_FORMAT_MARKDOWN_INLINE,
+  TOOLKIT_LATEX_COPY_FORMAT_MARKDOWN_BLOCK,
+  TOOLKIT_LATEX_COPY_FORMAT_LATEX_INLINE,
+  TOOLKIT_LATEX_COPY_FORMAT_LATEX_DISPLAY,
+]);
+let TOOLKIT_LATEX_COPY_FORMAT = TOOLKIT_LATEX_COPY_FORMAT_RAW;
 const THEME_ATTR = "data-toolkit-theme";
 const TIMELINE_ID = "chatgpt-conversation-toolkit-timeline";
 const TIMELINE_TRACK_ID = "chatgpt-conversation-toolkit-timeline-track";
@@ -214,6 +227,7 @@ const TOOLKIT_CONFIG_DEFAULTS = Object.freeze({
   messageMode: TOOLKIT_MESSAGE_MODE_LOADED,
   exportFormat: TOOLKIT_EXPORT_FORMAT_JSON,
   exportRole: TOOLKIT_EXPORT_ROLE_ALL,
+  latexCopyFormat: TOOLKIT_LATEX_COPY_FORMAT_RAW,
 });
 const TOOLKIT_CONFIG_LIMITS = Object.freeze({
   keepLatest: { min: 1, max: 1000 },
@@ -270,6 +284,9 @@ const normalizeToolkitConfig = (config = {}) => ({
   exportRole: TOOLKIT_EXPORT_ROLE_VALUES.includes(config.exportRole)
     ? config.exportRole
     : TOOLKIT_CONFIG_DEFAULTS.exportRole,
+  latexCopyFormat: TOOLKIT_LATEX_COPY_FORMAT_VALUES.includes(config.latexCopyFormat)
+    ? config.latexCopyFormat
+    : TOOLKIT_CONFIG_DEFAULTS.latexCopyFormat,
 });
 
 const applyToolkitConfig = (config = {}) => {
@@ -282,6 +299,7 @@ const applyToolkitConfig = (config = {}) => {
   TOOLKIT_MESSAGE_MODE = normalized.messageMode;
   TOOLKIT_EXPORT_FORMAT = normalized.exportFormat;
   TOOLKIT_EXPORT_ROLE = normalized.exportRole;
+  TOOLKIT_LATEX_COPY_FORMAT = normalized.latexCopyFormat;
   return normalized;
 };
 
@@ -295,6 +313,7 @@ const getToolkitConfig = () =>
     messageMode: TOOLKIT_MESSAGE_MODE,
     exportFormat: TOOLKIT_EXPORT_FORMAT,
     exportRole: TOOLKIT_EXPORT_ROLE,
+    latexCopyFormat: TOOLKIT_LATEX_COPY_FORMAT,
   });
 
 const loadToolkitConfig = () => {

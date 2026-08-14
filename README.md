@@ -6,7 +6,14 @@
 
 当前活跃维护者：`bujue3709`（主要 / 唯一活跃维护者）
 
-当前版本：`v1.4.0`
+当前版本：`v1.4.1`
+
+## v1.4.1 更新内容（2026-08-14）🆕
+
+- 修复 ChatGPT 更新公式 DOM 后，渲染公式无法显示复制按钮或提示“未找到公式源码”的问题。
+- 适配新的 `role="math"` 语义容器与 `data-math-source` 源码属性，同时保留旧版 KaTeX、MathJax 和 MathML 结构兼容。
+- 公式源码提取会优先读取 ChatGPT 提供的原始 LaTeX，避免从渲染后的可见文本反推导致内容失真。
+- 新增公式复制格式设置，支持纯 LaTeX、Markdown 行内/块级和 LaTeX 行内/展示格式；默认仍为纯 LaTeX。
 
 ## v1.4.0 更新内容（2026-07-17）🆕
 
@@ -176,6 +183,8 @@
 
 - 鼠标移入“渲染后的公式”时，会在公式附近出现 `复制 LaTeX` 按钮。
 - 点击按钮可复制该公式的 LaTeX 源码（不是渲染后的普通文本）。
+- 可在“常用配置”中选择复制格式：纯 LaTeX、Markdown 行内 `$...$`、Markdown 块级 `$$...$$`、LaTeX 行内 `\(...\)` 或 LaTeX 展示 `\[...\]`。
+- 粘贴到 Obsidian 等 Markdown 编辑器时，推荐选择 Markdown 块级格式；默认格式仍为纯 LaTeX。
 - 复制后会在工具栏状态区显示成功/失败提示。
 - 对于 `LaTeX` 代码块，建议优先使用 ChatGPT 原生代码块右侧复制按钮。
 
@@ -206,6 +215,7 @@
 - 支持设置默认导出内容：
   - `用户提问 + GPT 回答`
   - `仅 GPT 回答`
+- 支持设置公式复制格式，默认使用纯 LaTeX，并可切换 Markdown 或 LaTeX 定界符包装格式。
 - 修改并点击“保存”后无需刷新页面，配置会即刻生效并自动写入本地存储进行持久化 💾
 - 弹窗原生支持随 ChatGPT 明暗主题动态无缝切换 🎨
 
@@ -309,6 +319,7 @@ const state = {
 - `TIMELINE_MAX_NODES`：时间线最大采样节点数
 - `exportFormat`：默认导出格式，支持 `json`、`txt`、`md`
 - `exportRole`：默认导出内容，支持 `all` 或 `assistant`
+- `latexCopyFormat`：公式复制格式，支持 `raw`、`markdown-inline`、`markdown-block`、`latex-inline`、`latex-display`
 
 ## 导出的会话 JSON 格式 📦
 

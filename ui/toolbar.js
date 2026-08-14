@@ -608,6 +608,7 @@ const SETTINGS_MODAL_ID = "chatgpt-toolkit-settings-modal";
 const SETTINGS_INPUT_IDS = Object.freeze({
   exportFormat: "toolkit-setting-exportFormat",
   exportRole: "toolkit-setting-exportRole",
+  latexCopyFormat: "toolkit-setting-latexCopyFormat",
 });
 
 const getSettingsModal = () => document.getElementById(SETTINGS_MODAL_ID);
@@ -622,6 +623,7 @@ const closeSettingsModal = () => {
 const getSettingsFallbackConfig = () => ({
   exportFormat: TOOLKIT_EXPORT_FORMAT || TOOLKIT_EXPORT_FORMAT_JSON,
   exportRole: TOOLKIT_EXPORT_ROLE || TOOLKIT_EXPORT_ROLE_ALL,
+  latexCopyFormat: TOOLKIT_LATEX_COPY_FORMAT || TOOLKIT_LATEX_COPY_FORMAT_RAW,
 });
 
 const getSettingsConfig = (config) => {
@@ -645,6 +647,7 @@ const readSettingsDraft = () => {
   const draft = {
     exportFormat: readSettingsInputValue(SETTINGS_INPUT_IDS.exportFormat),
     exportRole: readSettingsInputValue(SETTINGS_INPUT_IDS.exportRole),
+    latexCopyFormat: readSettingsInputValue(SETTINGS_INPUT_IDS.latexCopyFormat),
   };
   return Object.values(draft).some((value) => value !== undefined) ? draft : null;
 };
@@ -689,6 +692,27 @@ const renderSettingsModal = (modal, draftConfig = null) => {
             </option>
           </select>
           <p class="chatgpt-toolkit-form-desc">${t("settings.exportRole.desc")}</p>
+        </div>
+        <div class="chatgpt-toolkit-form-group">
+          <label class="chatgpt-toolkit-form-label" for="${SETTINGS_INPUT_IDS.latexCopyFormat}">${t("settings.latexCopyFormat.label")}</label>
+          <select id="${SETTINGS_INPUT_IDS.latexCopyFormat}" class="chatgpt-toolkit-input">
+            <option value="${TOOLKIT_LATEX_COPY_FORMAT_RAW}"${config.latexCopyFormat === TOOLKIT_LATEX_COPY_FORMAT_RAW ? " selected" : ""}>
+              ${t("settings.latexCopyFormat.raw")}
+            </option>
+            <option value="${TOOLKIT_LATEX_COPY_FORMAT_MARKDOWN_INLINE}"${config.latexCopyFormat === TOOLKIT_LATEX_COPY_FORMAT_MARKDOWN_INLINE ? " selected" : ""}>
+              ${t("settings.latexCopyFormat.markdownInline")}
+            </option>
+            <option value="${TOOLKIT_LATEX_COPY_FORMAT_MARKDOWN_BLOCK}"${config.latexCopyFormat === TOOLKIT_LATEX_COPY_FORMAT_MARKDOWN_BLOCK ? " selected" : ""}>
+              ${t("settings.latexCopyFormat.markdownBlock")}
+            </option>
+            <option value="${TOOLKIT_LATEX_COPY_FORMAT_LATEX_INLINE}"${config.latexCopyFormat === TOOLKIT_LATEX_COPY_FORMAT_LATEX_INLINE ? " selected" : ""}>
+              ${t("settings.latexCopyFormat.latexInline")}
+            </option>
+            <option value="${TOOLKIT_LATEX_COPY_FORMAT_LATEX_DISPLAY}"${config.latexCopyFormat === TOOLKIT_LATEX_COPY_FORMAT_LATEX_DISPLAY ? " selected" : ""}>
+              ${t("settings.latexCopyFormat.latexDisplay")}
+            </option>
+          </select>
+          <p class="chatgpt-toolkit-form-desc">${t("settings.latexCopyFormat.desc")}</p>
         </div>
       </div>
       <div class="chatgpt-toolkit-prompt-footer">

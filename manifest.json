@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Conversation Toolkit",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Export full or selected ChatGPT conversation turns, search long threads, and navigate with a timeline.",
   "icons": {
     "16": "image/icon16.png",

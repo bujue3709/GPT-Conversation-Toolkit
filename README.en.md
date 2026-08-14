@@ -6,7 +6,14 @@ A browser extension for `ChatGPT Web` focused on full-session export, in-page se
 
 Current active maintainer: `bujue3709` (primary / sole active maintainer)
 
-Current version: `v1.4.0`
+Current version: `v1.4.1`
+
+## What's New in v1.4.1 (2026-08-14)
+
+- Fixed rendered formulas no longer showing a copy button or reporting that no source was found after ChatGPT's formula DOM update.
+- Added support for the new `role="math"` semantic container and `data-math-source` source attribute while retaining compatibility with legacy KaTeX, MathJax, and MathML markup.
+- LaTeX extraction now prefers the original source supplied by ChatGPT instead of reconstructing it from rendered text.
+- Added a formula copy-format setting for raw LaTeX, Markdown inline/display, and LaTeX inline/display wrappers; raw LaTeX remains the default.
 
 ## What's New in v1.4.0 (2026-07-17)
 
@@ -176,6 +183,8 @@ The toolbar footer also includes two lightweight links:
 
 - When you hover a rendered formula, a `Copy LaTeX` button appears near that formula.
 - Clicking it copies the formula's LaTeX source (not rendered plain text).
+- The Settings panel can wrap copied formulas as raw LaTeX, Markdown inline `$...$`, Markdown display `$$...$$`, LaTeX inline `\(...\)`, or LaTeX display `\[...\]`.
+- Markdown display is recommended when pasting into Obsidian or another Markdown editor; raw LaTeX remains the default.
 - Copy success/failure is shown in the toolbar status area.
 - For `LaTeX` code blocks, use ChatGPT's native copy button on the right side of the block.
 
@@ -203,6 +212,7 @@ The toolbar footer also includes two lightweight links:
 - Allows you to select the default export content:
   - user questions + GPT answers
   - GPT answers only
+- Allows you to choose the formula copy format. Raw LaTeX is the default, with Markdown and LaTeX delimiter-wrapped alternatives.
 - After clicking "Save", changes apply immediately without a page refresh and automatically persist to local storage.
 - The modal natively adapts to the ChatGPT light/dark theme dynamically.
 
@@ -307,6 +317,7 @@ Key fields:
 - `TIMELINE_MAX_NODES`: maximum sampled timeline node count
 - `exportFormat`: default export format; supports `json`, `txt`, and `md`
 - `exportRole`: default export content; supports `all` or `assistant`
+- `latexCopyFormat`: formula copy format; supports `raw`, `markdown-inline`, `markdown-block`, `latex-inline`, and `latex-display`
 
 ## Exported Conversation JSON
 
