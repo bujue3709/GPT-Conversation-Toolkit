@@ -15,15 +15,6 @@ Current version: `v1.4.1`
 - LaTeX extraction now prefers the original source supplied by ChatGPT instead of reconstructing it from rendered text.
 - Added a formula copy-format setting for raw LaTeX, Markdown inline/display, and LaTeX inline/display wrappers; raw LaTeX remains the default.
 
-## What's New in v1.4.0 (2026-07-17)
-
-- Added a selective export dialog for exporting the full conversation or any chosen turns.
-- Added a GPT-answers-only filter that can be saved as the default export content.
-- Turn selection supports select all, invert, clear, `Shift` range selection, and 50-turn pagination.
-- Falls back to loaded/cached messages with a clear partial-data warning when API conversation data is unavailable.
-- Filtered JSON exports include source positions and selection metadata without leaking the complete raw conversation payload.
-- Selection controls now update only the affected UI, eliminating dialog flashes during checkbox, select, and pagination interactions.
-
 ## ChatGPT Virtualized List Impact (Important)
 
 Recent ChatGPT Web versions use a virtualized list in the conversation area:
