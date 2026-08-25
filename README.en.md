@@ -8,12 +8,14 @@ Current active maintainer: `bujue3709` (primary / sole active maintainer)
 
 Current version: `v1.4.1`
 
-## What's New in v1.4.1 (2026-08-14)
+## What's New in v1.4.1 (2026-08-25)
 
-- Fixed rendered formulas no longer showing a copy button or reporting that no source was found after ChatGPT's formula DOM update.
-- Added support for the new `role="math"` semantic container and `data-math-source` source attribute while retaining compatibility with legacy KaTeX, MathJax, and MathML markup.
-- LaTeX extraction now prefers the original source supplied by ChatGPT instead of reconstructing it from rendered text.
-- Added a formula copy-format setting for raw LaTeX, Markdown inline/display, and LaTeX inline/display wrappers; raw LaTeX remains the default.
+- Adapted to the ChatGPT Web conversation API changes released on 2026-08-22, fixing missing older messages when long conversations are exported through the API.
+- API requests now obtain the signed-in session's short-lived access token from `/api/auth/session` and use Bearer authentication to read conversation data. The token is kept only in page memory and is never written to files or browser storage.
+- Full active-branch requests now prefer `include_full_conversation=true`, preventing partial message trees returned by the updated API from being treated as complete conversations.
+- Added cursor-pagination support for the new `/backend-api/conversations/{id}` endpoints, allowing older message pages to be loaded continuously and rebuilt in their original order.
+- Added message-tree completeness validation. If the API fails and export falls back to loaded DOM/cache data, the selection dialog now shows the error code and HTTP status for easier diagnosis.
+- Work mode and all other existing features remain unchanged.
 
 ## ChatGPT Virtualized List Impact (Important)
 
