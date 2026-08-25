@@ -180,8 +180,18 @@ const renderExportSelectionModal = () => {
   const pageCount = getExportSelectionPageCount();
   const selectedCount = exportSelectionState.selectedTurnIds.size;
   const messageCount = resultPreview?.messageCount || 0;
+  const fallbackApiError = exportSelectionState.preparedExport?.payload?.apiError;
+  const fallbackReason = fallbackApiError
+    ? [
+        fallbackApiError.code || "API_ERROR",
+        Number.isFinite(fallbackApiError.status) ? `HTTP ${fallbackApiError.status}` : "",
+      ].filter(Boolean).join(" · ")
+    : "";
   const partialWarning = exportSelectionState.preparedExport?.usedFallback
-    ? `<div class="chatgpt-toolkit-export-warning">${t("exportSelection.partialWarning")}</div>`
+    ? `<div class="chatgpt-toolkit-export-warning">
+        ${t("exportSelection.partialWarning")}
+        ${fallbackReason ? `<br><small>${escapeExportSelectionHtml(fallbackReason)}</small>` : ""}
+      </div>`
     : "";
   const turnSection = `
     <div data-export-selection-turn-section ${isSelectedScope ? "" : "hidden"}>

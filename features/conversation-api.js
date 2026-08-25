@@ -3,6 +3,11 @@
  */
 const EXPORT_API_TIMEOUT_MS = 10000;
 const EXPORT_API_RETRY_COUNT = 1;
+const EXPORT_API_PAGE_NUM_TURNS = 100;
+const EXPORT_API_MAX_PAGES = 500;
+const EXPORT_API_SESSION_TIMEOUT_MS = 5000;
+
+let exportApiAccessTokenPromise = null;
 
 class ExportApiError extends Error {
   constructor(code, message, options = {}) {
@@ -60,6 +65,7 @@ const getConversationApiCandidates = (conversationId) => {
 
   origins.forEach((origin) => {
     [
+      `${origin}/backend-api/conversation/${encodedId}?include_full_conversation=true`,
       `${origin}/backend-api/conversation/${encodedId}`,
       `${origin}/backend-api/conversation/${encodedId}?offset=0&limit=100000`,
     ].forEach((url) => {
@@ -72,6 +78,114 @@ const getConversationApiCandidates = (conversationId) => {
   });
 
   return candidates;
+};
+
+const getConversationMappingValue = (data) => {
+  const mapping = data?.mapping || data?.conversation?.mapping;
+  return mapping && typeof mapping === "object" && !Array.isArray(mapping) ? mapping : null;
+};
+
+const isCompleteConversationMapping = (data) => {
+  const mapping = getConversationMappingValue(data);
+  if (!mapping) {
+    return false;
+  }
+
+  const currentNodeId =
+    data?.current_node ||
+    data?.current_node_id ||
+    data?.conversation?.current_node ||
+    data?.conversation?.current_node_id ||
+    "";
+  if (!currentNodeId || !mapping[currentNodeId]) {
+    return false;
+  }
+
+  const seen = new Set();
+  let nextId = currentNodeId;
+  while (nextId) {
+    if (seen.has(nextId) || !mapping[nextId]) {
+      return false;
+    }
+    seen.add(nextId);
+    nextId = mapping[nextId]?.parent || "";
+  }
+  return true;
+};
+
+const getPaginatedConversationApiUrl = (origin, conversationId, before = "") => {
+  const encodedId = encodeURIComponent(conversationId);
+  const path = before
+    ? `/backend-api/conversations/${encodedId}/messages`
+    : `/backend-api/conversations/${encodedId}`;
+  const url = new URL(path, origin);
+  if (before) {
+    url.searchParams.set("before", before);
+  }
+  url.searchParams.set("include_has_versions", "true");
+  url.searchParams.set("num_turns", String(EXPORT_API_PAGE_NUM_TURNS));
+  return url.toString();
+};
+
+const getPaginatedConversationCursor = (data) => {
+  const pageInfo = data?.page_info || data?.pageInfo || {};
+  const hasPreviousPage =
+    pageInfo.has_previous_page === true || pageInfo.hasPreviousPage === true;
+  const cursor = pageInfo.start_cursor || pageInfo.startCursor || "";
+  return hasPreviousPage && typeof cursor === "string" ? cursor : "";
+};
+
+const mergePaginatedConversationMessages = (olderMessages, newerMessages) => {
+  const merged = [];
+  const seen = new Set();
+  [...olderMessages, ...newerMessages].forEach((message) => {
+    if (!message || typeof message !== "object") {
+      return;
+    }
+    const id = typeof message.id === "string" ? message.id : "";
+    const key = id || `message-offset-${merged.length}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    merged.push(message);
+  });
+  return merged;
+};
+
+const buildConversationMappingFromMessages = (messages, conversationId, currentNodeId = "") => {
+  const rootId = `paginated-root:${conversationId}`;
+  const mapping = {
+    [rootId]: {
+      id: rootId,
+      parent: "",
+      children: [],
+    },
+  };
+  let parentId = rootId;
+
+  messages.forEach((message, index) => {
+    let messageId = typeof message?.id === "string" && message.id
+      ? message.id
+      : `paginated-message-${index + 1}`;
+    if (mapping[messageId]) {
+      messageId = `paginated-message-${index + 1}-${messageId}`;
+    }
+    const node = {
+      id: messageId,
+      parent: parentId,
+      children: [],
+      message: message.id === messageId ? message : { ...message, id: messageId },
+    };
+    mapping[parentId].children = [messageId];
+    mapping[messageId] = node;
+    parentId = messageId;
+  });
+
+  return {
+    mapping,
+    currentNodeId: currentNodeId && mapping[currentNodeId] ? currentNodeId : parentId,
+  };
 };
 
 const getNormalizedConversationIdCandidates = (conversationIds) => {
@@ -94,19 +208,101 @@ const shouldRetryExportApiRequest = (error) =>
   error?.code === "TIMEOUT" ||
   (Number.isFinite(error?.status) && error.status >= 500 && error.status < 600);
 
+const getExportApiAccessToken = async (options = {}) => {
+  if (options.forceRefresh) {
+    exportApiAccessTokenPromise = null;
+  }
+  if (exportApiAccessTokenPromise) {
+    return exportApiAccessTokenPromise;
+  }
+
+  exportApiAccessTokenPromise = (async () => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), EXPORT_API_SESSION_TIMEOUT_MS);
+    const sessionUrl = new URL("/api/auth/session", window.location.origin).toString();
+    try {
+      const response = await fetch(sessionUrl, {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+        headers: {
+          Accept: "application/json",
+        },
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new ExportApiError(
+          "AUTH_SESSION",
+          `ChatGPT session API returned HTTP ${response.status}.`,
+          { status: response.status, fallbackAllowed: true, url: sessionUrl },
+        );
+      }
+      const session = await response.json();
+      const accessToken = session?.accessToken || session?.access_token || "";
+      if (typeof accessToken !== "string" || accessToken.length < 20) {
+        throw new ExportApiError(
+          "AUTH_SESSION",
+          "ChatGPT session API returned no access token.",
+          { fallbackAllowed: true, url: sessionUrl },
+        );
+      }
+      return accessToken;
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        throw new ExportApiError("AUTH_SESSION_TIMEOUT", "ChatGPT session request timed out.", {
+          fallbackAllowed: true,
+          url: sessionUrl,
+          cause: error,
+        });
+      }
+      throw normalizeExportApiError(error, "Unable to read the ChatGPT session.");
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  })().catch((error) => {
+    exportApiAccessTokenPromise = null;
+    throw error;
+  });
+
+  return exportApiAccessTokenPromise;
+};
+
+const getAuthenticatedExportApiHeaders = async (url, headers = {}) => {
+  const normalizedHeaders = { ...headers };
+  let isBackendApi = false;
+  try {
+    isBackendApi = new URL(url, window.location.origin).pathname.startsWith("/backend-api/");
+  } catch (error) {}
+  if (!isBackendApi || Object.keys(normalizedHeaders).some(
+    (name) => name.toLowerCase() === "authorization",
+  )) {
+    return normalizedHeaders;
+  }
+
+  try {
+    const accessToken = await getExportApiAccessToken();
+    normalizedHeaders.Authorization = `Bearer ${accessToken}`;
+  } catch (error) {
+    // Keep the cookie-only request as a compatibility fallback. The resulting
+    // HTTP error is more useful than failing before the conversation request.
+  }
+  return normalizedHeaders;
+};
+
 const fetchJsonWithTimeout = async (url, options = {}) => {
   const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : EXPORT_API_TIMEOUT_MS;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
+    const authenticatedHeaders = await getAuthenticatedExportApiHeaders(url, options.headers || {});
     const response = await fetch(url, {
       credentials: "include",
       cache: "no-store",
       ...options,
       headers: {
         Accept: "application/json",
-        ...(options.headers || {}),
+        ...authenticatedHeaders,
       },
       signal: controller.signal,
     });
@@ -160,6 +356,103 @@ const fetchJsonWithTimeout = async (url, options = {}) => {
   }
 };
 
+const fetchPaginatedConversationById = async (conversationId, options = {}) => {
+  const origins = [
+    window.location.origin,
+    window.location.hostname === "chatgpt.com"
+      ? "https://chat.openai.com"
+      : window.location.hostname === "chat.openai.com"
+        ? "https://chatgpt.com"
+        : "",
+  ].filter(Boolean);
+  let lastError = null;
+
+  for (const origin of origins) {
+    try {
+      const firstResponse = await fetchJsonWithTimeout(
+        getPaginatedConversationApiUrl(origin, conversationId),
+        { timeoutMs: options.timeoutMs },
+      );
+      const firstData = firstResponse.data;
+      if (!Array.isArray(firstData?.messages)) {
+        throw new ExportApiError(
+          "INVALID_RESPONSE",
+          "Paginated conversation API returned no messages.",
+          { status: firstResponse.status, fallbackAllowed: true, url: firstResponse.url },
+        );
+      }
+
+      let messages = mergePaginatedConversationMessages([], firstData.messages);
+      let cursor = getPaginatedConversationCursor(firstData);
+      const seenCursors = new Set();
+      let pageCount = 1;
+
+      while (cursor) {
+        if (seenCursors.has(cursor) || pageCount >= EXPORT_API_MAX_PAGES) {
+          throw new ExportApiError(
+            "PAGINATION_STALLED",
+            "Paginated conversation API did not reach the oldest message.",
+            { fallbackAllowed: true, url: firstResponse.url },
+          );
+        }
+        seenCursors.add(cursor);
+
+        const pageResponse = await fetchJsonWithTimeout(
+          getPaginatedConversationApiUrl(origin, conversationId, cursor),
+          { timeoutMs: options.timeoutMs },
+        );
+        if (!Array.isArray(pageResponse.data?.messages)) {
+          throw new ExportApiError(
+            "INVALID_RESPONSE",
+            "Paginated conversation message page returned no messages.",
+            { status: pageResponse.status, fallbackAllowed: true, url: pageResponse.url },
+          );
+        }
+        messages = mergePaginatedConversationMessages(pageResponse.data.messages, messages);
+        cursor = getPaginatedConversationCursor(pageResponse.data);
+        pageCount += 1;
+      }
+
+      if (messages.length === 0) {
+        throw new ExportApiError("EMPTY_EXPORT", "Paginated conversation API returned no messages.", {
+          fallbackAllowed: true,
+          url: firstResponse.url,
+        });
+      }
+
+      const rebuilt = buildConversationMappingFromMessages(
+        messages,
+        conversationId,
+        firstData.current_node || firstData.current_node_id || "",
+      );
+      return {
+        data: {
+          ...firstData,
+          conversation_id: firstData.conversation_id || conversationId,
+          current_node: rebuilt.currentNodeId,
+          mapping: rebuilt.mapping,
+        },
+        status: firstResponse.status,
+        url: firstResponse.url,
+        conversationId,
+        paginated: true,
+        pageCount,
+      };
+    } catch (error) {
+      lastError = normalizeExportApiError(error);
+      if (!lastError.fallbackAllowed) {
+        throw lastError;
+      }
+    }
+  }
+
+  throw lastError || new ExportApiError(
+    "UNKNOWN",
+    "Paginated conversation API request failed.",
+    { fallbackAllowed: true },
+  );
+};
+
 const fetchConversationById = async (conversationId, options = {}) => {
   const normalizedId = normalizeStrictConversationId(conversationId || "");
   if (!normalizedId) {
@@ -169,7 +462,16 @@ const fetchConversationById = async (conversationId, options = {}) => {
   }
 
   let lastError = null;
-  const candidates = getConversationApiCandidates(normalizedId);
+  const candidates = getConversationApiCandidates(normalizedId).filter((url) => {
+    const isFullConversationRequest = url.includes("include_full_conversation=true");
+    if (options.fullConversationOnly) {
+      return isFullConversationRequest;
+    }
+    if (options.legacyOnly) {
+      return !isFullConversationRequest;
+    }
+    return true;
+  });
   const retryCount = Number.isFinite(options.retries)
     ? Math.max(0, Math.trunc(options.retries))
     : EXPORT_API_RETRY_COUNT;
@@ -185,6 +487,17 @@ const fetchConversationById = async (conversationId, options = {}) => {
             fallbackAllowed: true,
             url,
           });
+        }
+        if (!isCompleteConversationMapping(response.data)) {
+          throw new ExportApiError(
+            "INCOMPLETE_RESPONSE",
+            "Conversation API returned only part of the active message path.",
+            {
+              status: response.status,
+              fallbackAllowed: true,
+              url,
+            },
+          );
         }
         return {
           ...response,
@@ -222,7 +535,7 @@ const fetchConversationByIdCandidates = async (conversationIds, options = {}) =>
 
   if (typeof getCapturedConversationApiResponse === "function") {
     const captured = getCapturedConversationApiResponse(candidates);
-    if (captured?.data) {
+    if (captured?.data && isCompleteConversationMapping(captured.data)) {
       return captured;
     }
   }
@@ -230,7 +543,31 @@ const fetchConversationByIdCandidates = async (conversationIds, options = {}) =>
   let lastError = null;
   for (const conversationId of candidates) {
     try {
-      return await fetchConversationById(conversationId, options);
+      return await fetchConversationById(conversationId, {
+        ...options,
+        fullConversationOnly: true,
+      });
+    } catch (error) {
+      lastError = normalizeExportApiError(error);
+      if (!lastError.fallbackAllowed) {
+        throw lastError;
+      }
+    }
+
+    try {
+      return await fetchPaginatedConversationById(conversationId, options);
+    } catch (error) {
+      lastError = normalizeExportApiError(error);
+      if (!lastError.fallbackAllowed) {
+        throw lastError;
+      }
+    }
+
+    try {
+      return await fetchConversationById(conversationId, {
+        ...options,
+        legacyOnly: true,
+      });
     } catch (error) {
       lastError = normalizeExportApiError(error);
       if (!lastError.fallbackAllowed) {
