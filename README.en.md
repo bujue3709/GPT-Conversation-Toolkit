@@ -10,10 +10,9 @@ Current version: `v1.4.3`
 
 ## What's New in v1.4.3 (2026-09-17)
 
-- Added `.png` long-image export using the existing all/selected-turn and full-conversation/GPT-only selection flow.
+- Added `.png` long-image export.
 - PNG output is generated from complete export data rather than the current viewport DOM. When the API is unavailable, the UI clearly states that only currently available loaded/cached messages are included.
 - Added a fixed `1080px`, white-background reading layout with readable headings, paragraphs, bold text, inline code, code blocks, quotes, lists, dividers, and basic tables.
-- Every image includes a bottom-right “Exported by GPT-Conversation-Toolkit” watermark in the extension's active language.
 - Long conversations paginate between messages first. Only a single over-height message is split by content structure, with `User · continued` / `ChatGPT · continued` labels on continuation pages.
 - Multi-page exports download sequentially as `part-01`, `part-02`, and so on. Only one large Canvas exists at a time and is released after its PNG Blob is produced.
 - Added generation progress, a duplicate-task lock, and separate data retrieval, image rendering, content-too-large, and unknown-error messages.
