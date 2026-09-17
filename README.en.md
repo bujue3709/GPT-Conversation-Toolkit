@@ -6,7 +6,12 @@ A browser extension for `ChatGPT Web` focused on full-session export, in-page se
 
 Current active maintainer: `bujue3709` (primary / sole active maintainer)
 
-Current version: `v1.4.1`
+Current version: `v1.4.2`
+
+## What's New in v1.4.2 (2026-09-17)
+
+- Bumped the extension version to `1.4.2`.
+- Retains the API export completeness and authenticated pagination improvements from v1.4.1.
 
 ## What's New in v1.4.1 (2026-08-25)
 
