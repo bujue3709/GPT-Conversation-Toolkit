@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ChatGPT Conversation Toolkit",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "Export full or selected ChatGPT conversation turns, search long threads, and navigate with a timeline.",
   "icons": {
     "16": "image/icon16.png",
@@ -35,6 +35,7 @@
         "features/virtualizer-bridge.js",
         "features/virtualized-jump.js",
         "features/export-formatters.js",
+        "features/export-png-renderer.js",
         "features/export-download.js",
         "features/export-dom-fallback.js",
         "features/export.js",

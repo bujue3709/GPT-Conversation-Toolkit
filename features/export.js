@@ -79,7 +79,15 @@ const exportMessages = async (options = {}) => {
       return null;
     }
 
-    downloadConversationExport(payload, options.format || TOOLKIT_EXPORT_FORMAT);
+    const format = options.format || TOOLKIT_EXPORT_FORMAT;
+    if (format === TOOLKIT_EXPORT_FORMAT_PNG) {
+      await exportConversationPng(payload, {
+        usedFallback: preparedExport.usedFallback,
+      });
+      return payload;
+    }
+
+    downloadConversationExport(payload, format);
     updateStatusByKey(
       preparedExport.usedFallback ? "status.exportFallbackDone" : "status.exportApiDone",
       preparedExport.usedFallback ? "warn" : "success",
@@ -88,7 +96,11 @@ const exportMessages = async (options = {}) => {
     return payload;
   } catch (error) {
     const normalizedError = normalizeExportApiError(error, "Export failed.");
-    updateStatusByKey("status.exportFailed", "warn", {
+    const failureStatusKey = (options.format || TOOLKIT_EXPORT_FORMAT) === TOOLKIT_EXPORT_FORMAT_PNG
+      && typeof getPngExportFailureStatusKey === "function"
+      ? getPngExportFailureStatusKey(error)
+      : "status.exportFailed";
+    updateStatusByKey(failureStatusKey, "warn", {
       reason: normalizedError.message,
     });
     return null;

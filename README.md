@@ -6,21 +6,17 @@
 
 当前活跃维护者：`bujue3709`（主要 / 唯一活跃维护者）
 
-当前版本：`v1.4.2`
+当前版本：`v1.4.3`
 
-## v1.4.2 更新内容（2026-09-17）🆕
+## v1.4.3 更新内容（2026-09-17）🆕
 
-- 更新插件版本号至 `1.4.2`。
-- 保留 v1.4.1 中的 API 导出完整性与认证分页兼容改进。
-
-## v1.4.1 更新内容（2026-08-25）🆕
-
-- 适配 ChatGPT Web 于 2026-08-22 更新后的会话接口，修复长对话通过 API 导出时缺失早期消息的问题。
-- API 请求会通过 `/api/auth/session` 获取当前登录会话的短期访问令牌，并使用 Bearer 认证读取会话数据；令牌仅保存在当前页面内存中，不会写入文件或浏览器存储。
-- 优先使用 `include_full_conversation=true` 请求完整活动分支，避免将新版接口返回的局部消息树误判为完整会话。
-- 新增新版 `/backend-api/conversations/{id}` 游标分页兼容，可连续读取历史消息页并按原始顺序重建完整活动分支。
-- 增加消息树完整性校验；API 失败并降级为 DOM/缓存导出时，选择弹窗会显示错误码与 HTTP 状态，方便定位账号或接口限制。
-- 工作模式及其他现有功能保持不变。
+- 新增 `.png` 长图导出，并复用现有的“全部/指定问答回合”和“完整问答/仅 GPT 回答”选择逻辑。
+- PNG 基于完整会话导出数据生成，不依赖当前视口 DOM；API 不可用时仍会明确提示仅包含当前可获得的已加载/缓存消息。
+- 固定 `1080px` 白底阅读版式，保留标题、段落、标题、粗体、行内代码、代码块、引用、列表、分隔线和基础表格可读性。
+- 每张图片右下角会按插件当前语言显示“由 GPT-Conversation-Toolkit 导出”水印。
+- 超长会话会在消息之间优先自动分页；单条超长消息才会按内容结构拆分，并使用 `User · continued` / `ChatGPT · continued` 标记续页。
+- 多页文件按 `part-01`、`part-02` 顺序生成并下载；每次只创建一张大 Canvas，转为 PNG Blob 后立即释放，再处理下一页。
+- 增加生成进度、重复任务锁和数据获取/图片渲染/内容过大/未知错误分类提示。
 
 ## ChatGPT 虚拟化列表影响说明（重要）
 
@@ -49,7 +45,7 @@
 ## 功能概览 ✨
 
 - 🧹 长会话优化：旧版折叠能力已废弃。ChatGPT Web 的虚拟化列表已经会自动控制 DOM 规模，不再需要插件额外隐藏旧消息。
-- 📦 灵活导出：将全部或选定问答回合导出为 `.json`、`.txt` 或 `.md`，并可只保留 GPT 回答。
+- 📦 灵活导出：将全部或选定问答回合导出为 `.json`、`.txt`、`.md` 或自动分页的 `.png` 长图，并可只保留 GPT 回答。
 - 🔍 消息搜索：按关键词搜索当前对话内容，支持高亮和前后跳转；深层消息会通过虚拟化跳转逻辑定位。
 - 📚 Prompt 指令库：支持新增、删除、搜索、分类、排序、导入 JSON、导出 JSON、单击复制。
 - ⚙️ 常用配置：提供原生独立设置弹窗，支持可视化无缝调节各项运行参数并自动持久化。
@@ -137,7 +133,7 @@
 - 点击“导出”可选择全部会话或指定问答回合，并可切换为仅导出 GPT 回答。
 - 指定回合模式支持全选、反选、清空、`Shift` 连续选择和分页浏览；选择状态会跨页保留。
 - 底部会实时显示本次包含的回合数和消息数，没有可导出消息时会禁用导出按钮。
-- 可在“常用配置 / 设置”中选择默认导出格式和默认导出内容；格式支持 `.json`、`.txt`、`.md`。
+- 可在“常用配置 / 设置”中选择默认导出格式和默认导出内容；格式支持 `.json`、`.txt`、`.md`、`.png`。
 - 导出优先使用 API 会话数据，即使页面当前只挂载了部分虚拟化 DOM，也会尽量导出完整会话 ✅
 - API 数据不可用时会降级为已加载/缓存内容，并在选择页显示不完整提示。
 
@@ -210,6 +206,7 @@
   - `.json`
   - `.txt`
   - `.md`
+  - `.png` 长图
 - 支持设置默认导出内容：
   - `用户提问 + GPT 回答`
   - `仅 GPT 回答`
@@ -235,6 +232,7 @@ features/
   collapse.js
   export.js
   export-selection.js
+  export-png-renderer.js
   folders.js
   search.js
   latex-copy.js
@@ -274,6 +272,8 @@ manifest.json
   - 会话导出 📦
 - [features/export-selection.js](./features/export-selection.js)
   - 问答回合选择、角色筛选与分页导出 📋
+- [features/export-png-renderer.js](./features/export-png-renderer.js)
+  - 固定宽度 PNG 阅读版式、结构化分页与逐页低内存下载 🖼️
 - [features/folders.js](./features/folders.js)
   - 侧边栏对话文件夹管理、拖拽归类、本地持久化恢复 📁
 - [features/search.js](./features/search.js)
@@ -315,7 +315,7 @@ const state = {
 - `COLLAPSE_AUTO_REOPTIMIZE_BUFFER`：旧版自动再优化缓冲数量；该折叠功能已废弃
 - `TIMELINE_VISIBLE_NODE_CAPACITY`：时间线单屏大致可容纳的节点数
 - `TIMELINE_MAX_NODES`：时间线最大采样节点数
-- `exportFormat`：默认导出格式，支持 `json`、`txt`、`md`
+- `exportFormat`：默认导出格式，支持 `json`、`txt`、`md`、`png`
 - `exportRole`：默认导出内容，支持 `all` 或 `assistant`
 - `latexCopyFormat`：公式复制格式，支持 `raw`、`markdown-inline`、`markdown-block`、`latex-inline`、`latex-display`
 

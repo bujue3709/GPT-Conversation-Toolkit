@@ -243,6 +243,7 @@ const renderExportSelectionModal = () => {
             <option value="${TOOLKIT_EXPORT_FORMAT_JSON}"${exportSelectionState.format === TOOLKIT_EXPORT_FORMAT_JSON ? " selected" : ""}>.json</option>
             <option value="${TOOLKIT_EXPORT_FORMAT_TEXT}"${exportSelectionState.format === TOOLKIT_EXPORT_FORMAT_TEXT ? " selected" : ""}>.txt</option>
             <option value="${TOOLKIT_EXPORT_FORMAT_MARKDOWN}"${exportSelectionState.format === TOOLKIT_EXPORT_FORMAT_MARKDOWN ? " selected" : ""}>.md</option>
+            <option value="${TOOLKIT_EXPORT_FORMAT_PNG}"${exportSelectionState.format === TOOLKIT_EXPORT_FORMAT_PNG ? " selected" : ""}>.png</option>
           </select>
         </label>
       </div>

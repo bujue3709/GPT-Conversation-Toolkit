@@ -678,6 +678,9 @@ const renderSettingsModal = (modal, draftConfig = null) => {
             <option value="${TOOLKIT_EXPORT_FORMAT_MARKDOWN}"${config.exportFormat === TOOLKIT_EXPORT_FORMAT_MARKDOWN ? " selected" : ""}>
               ${t("settings.exportFormat.md")}
             </option>
+            <option value="${TOOLKIT_EXPORT_FORMAT_PNG}"${config.exportFormat === TOOLKIT_EXPORT_FORMAT_PNG ? " selected" : ""}>
+              ${t("settings.exportFormat.png")}
+            </option>
           </select>
           <p class="chatgpt-toolkit-form-desc">${t("settings.exportFormat.desc")}</p>
         </div>

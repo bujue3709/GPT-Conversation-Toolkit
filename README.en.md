@@ -6,21 +6,17 @@ A browser extension for `ChatGPT Web` focused on full-session export, in-page se
 
 Current active maintainer: `bujue3709` (primary / sole active maintainer)
 
-Current version: `v1.4.2`
+Current version: `v1.4.3`
 
-## What's New in v1.4.2 (2026-09-17)
+## What's New in v1.4.3 (2026-09-17)
 
-- Bumped the extension version to `1.4.2`.
-- Retains the API export completeness and authenticated pagination improvements from v1.4.1.
-
-## What's New in v1.4.1 (2026-08-25)
-
-- Adapted to the ChatGPT Web conversation API changes released on 2026-08-22, fixing missing older messages when long conversations are exported through the API.
-- API requests now obtain the signed-in session's short-lived access token from `/api/auth/session` and use Bearer authentication to read conversation data. The token is kept only in page memory and is never written to files or browser storage.
-- Full active-branch requests now prefer `include_full_conversation=true`, preventing partial message trees returned by the updated API from being treated as complete conversations.
-- Added cursor-pagination support for the new `/backend-api/conversations/{id}` endpoints, allowing older message pages to be loaded continuously and rebuilt in their original order.
-- Added message-tree completeness validation. If the API fails and export falls back to loaded DOM/cache data, the selection dialog now shows the error code and HTTP status for easier diagnosis.
-- Work mode and all other existing features remain unchanged.
+- Added `.png` long-image export using the existing all/selected-turn and full-conversation/GPT-only selection flow.
+- PNG output is generated from complete export data rather than the current viewport DOM. When the API is unavailable, the UI clearly states that only currently available loaded/cached messages are included.
+- Added a fixed `1080px`, white-background reading layout with readable headings, paragraphs, bold text, inline code, code blocks, quotes, lists, dividers, and basic tables.
+- Every image includes a bottom-right “Exported by GPT-Conversation-Toolkit” watermark in the extension's active language.
+- Long conversations paginate between messages first. Only a single over-height message is split by content structure, with `User · continued` / `ChatGPT · continued` labels on continuation pages.
+- Multi-page exports download sequentially as `part-01`, `part-02`, and so on. Only one large Canvas exists at a time and is released after its PNG Blob is produced.
+- Added generation progress, a duplicate-task lock, and separate data retrieval, image rendering, content-too-large, and unknown-error messages.
 
 ## ChatGPT Virtualized List Impact (Important)
 
@@ -50,7 +46,7 @@ Impact on this extension:
 ## Feature Highlights
 
 - Long conversation cleanup: deprecated legacy collapse behavior. ChatGPT Web's virtualized list already controls DOM size, so the extension no longer needs to hide older messages.
-- Flexible export: export all or selected conversation turns as `.json`, `.txt`, or `.md`, with an option to keep only GPT answers.
+- Flexible export: export all or selected conversation turns as `.json`, `.txt`, `.md`, or automatically paginated `.png` long images, with an option to keep only GPT answers.
 - In-page search: search within the current conversation, highlight matches, and jump between results. Deep messages are positioned through the virtualized-jump flow.
 - Prompt library: add, delete, search, categorize, sort, import JSON, export JSON, and copy prompts with one click.
 - Settings panel: tweak core preferences locally via a native-style modal, supporting real-time variable tuning and auto-persistence.
@@ -136,7 +132,7 @@ The toolbar footer also includes two lightweight links:
 - “Export” lets you choose the full conversation or selected turns, and optionally export GPT answers only.
 - Selected-turn mode supports select all, invert, clear, `Shift` range selection, and pagination while preserving selections across pages.
 - The footer shows the resulting turn and message counts, and disables export when no messages remain after filtering.
-- Settings control the default export format and content; available formats are `.json`, `.txt`, and `.md`.
+- Settings control the default export format and content; available formats are `.json`, `.txt`, `.md`, and `.png`.
 - Export prefers API conversation data, so it can still export the full conversation even when only part of the virtualized DOM is mounted.
 - If API data is unavailable, export falls back to loaded/cached messages and displays a partial-data warning.
 
@@ -207,6 +203,7 @@ The toolbar footer also includes two lightweight links:
   - `.json`
   - `.txt`
   - `.md`
+  - `.png` long image
 - Allows you to select the default export content:
   - user questions + GPT answers
   - GPT answers only
@@ -233,6 +230,7 @@ features/
   collapse.js
   export.js
   export-selection.js
+  export-png-renderer.js
   folders.js
   search.js
   latex-copy.js
@@ -272,6 +270,8 @@ manifest.json
   Conversation export.
 - [features/export-selection.js](./features/export-selection.js)
   Turn selection, role filtering, pagination, and selective export.
+- [features/export-png-renderer.js](./features/export-png-renderer.js)
+  Fixed-width PNG reading layout, structure-aware pagination, and sequential low-memory downloads.
 - [features/folders.js](./features/folders.js)
   Sidebar folder management, drag classification, folder sorting, and local restore.
 - [features/search.js](./features/search.js)
@@ -313,7 +313,7 @@ Key fields:
 - `COLLAPSE_AUTO_REOPTIMIZE_BUFFER`: legacy auto-cleanup buffer; the cleanup feature is deprecated
 - `TIMELINE_VISIBLE_NODE_CAPACITY`: approximate number of timeline nodes visible in one screenful
 - `TIMELINE_MAX_NODES`: maximum sampled timeline node count
-- `exportFormat`: default export format; supports `json`, `txt`, and `md`
+- `exportFormat`: default export format; supports `json`, `txt`, `md`, and `png`
 - `exportRole`: default export content; supports `all` or `assistant`
 - `latexCopyFormat`: formula copy format; supports `raw`, `markdown-inline`, `markdown-block`, `latex-inline`, and `latex-display`
 

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>PNG renderer browser smoke test</title>
+  </head>
+  <body>
+    <pre id="result">RUNNING</pre>
+    <script>
+      const downloadedFiles = [];
+      const encodedBlobs = [];
+      const statusKeys = [];
+      const originalCreateObjectUrl = URL.createObjectURL.bind(URL);
+      const originalRevokeObjectUrl = URL.revokeObjectURL.bind(URL);
+      URL.createObjectURL = (blob) => {
+        encodedBlobs.push(blob);
+        return originalCreateObjectUrl(blob);
+      };
+      URL.revokeObjectURL = (url) => originalRevokeObjectUrl(url);
+      HTMLAnchorElement.prototype.click = function () {
+        downloadedFiles.push(this.download);
+      };
+      const updateStatusByKey = (key) => statusKeys.push(key);
+      const buildConversationExportFilename = () => "chatgpt-browser-smoke-2026-09-17.png";
+    </script>
+    <script src="../features/export-png-renderer.js"></script>
+    <script>
+      const resultNode = document.getElementById("result");
+      const code = Array.from({ length: 620 }, (_, index) => `const browser_line_${index} = ${index};`).join("\n");
+      const payload = {
+        source: "api",
+        title: "Browser smoke test",
+        messages: [
+          { role: "user", text: "Render a long answer" },
+          { role: "assistant", text: `# Result\n\n\`\`\`js\n${code}\n\`\`\`` },
+        ],
+      };
+
+      exportConversationPng(payload)
+        .then(({ pageCount }) => {
+          const validBlobs = encodedBlobs.every((blob) => blob.type === "image/png" && blob.size > 0);
+          const sequentialNames = downloadedFiles.every((filename, index) =>
+            filename.endsWith(`-part-${String(index + 1).padStart(2, "0")}.png`),
+          );
+          if (
+            pageCount > 1 &&
+            downloadedFiles.length === pageCount &&
+            encodedBlobs.length === pageCount &&
+            validBlobs &&
+            sequentialNames &&
+            statusKeys.at(-1) === "status.pngDoneMultiple"
+          ) {
+            resultNode.textContent = `PASS pages=${pageCount} blobs=${encodedBlobs.length}`;
+            return;
+          }
+          throw new Error(`Unexpected result: pages=${pageCount}, downloads=${downloadedFiles.length}`);
+        })
+        .catch((error) => {
+          resultNode.textContent = `FAIL ${error.stack || error.message}`;
+        });
+    </script>
+  </body>
+</html>
