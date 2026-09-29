@@ -348,6 +348,12 @@ if (!window[TOOLKIT_BOOTSTRAP_FLAG]) {
       return navRoot instanceof HTMLElement ? navRoot : history;
     }
 
+    const recentSection = document.querySelector('nav section[data-app-action-sidebar-section-heading="Recents"]');
+    const recentNav = recentSection?.closest("nav");
+    if (recentNav instanceof HTMLElement) {
+      return recentNav;
+    }
+
     const sidebarStage = document.getElementById("stage-slideover-sidebar");
     if (sidebarStage instanceof HTMLElement) {
       return sidebarStage;
@@ -501,8 +507,10 @@ if (!window[TOOLKIT_BOOTSTRAP_FLAG]) {
 
   const hasConversationNodeSignature = (element) =>
     Boolean(
-      element.matches?.('a[data-sidebar-item="true"][href*="/c/"]') ||
-      element.querySelector?.('a[data-sidebar-item="true"][href*="/c/"]') ||
+      element.matches?.(FOLDER_CONVERSATION_SELECTOR) ||
+      element.querySelector?.(FOLDER_CONVERSATION_SELECTOR) ||
+      element.matches?.('[data-sidebar-chatgpt-conversation-key]') ||
+      element.querySelector?.('[data-sidebar-chatgpt-conversation-key]') ||
       element.matches?.("[data-conversation-options-trigger]") ||
       element.querySelector?.("[data-conversation-options-trigger]"),
     );
@@ -511,6 +519,8 @@ if (!window[TOOLKIT_BOOTSTRAP_FLAG]) {
     Boolean(
       element.id === "history" ||
       element.closest?.("#history") ||
+      element.matches?.('[data-app-action-sidebar-section-heading="Recents"]') ||
+      element.closest?.('[data-app-action-sidebar-section-heading="Recents"]') ||
       element.matches?.(".group\\/sidebar-expando-section") ||
       element.closest?.(".group\\/sidebar-expando-section"),
     );

@@ -68,6 +68,8 @@ const getTimelineMessageKey = (node, index) => {
   }
 
   const messageId =
+    node.getAttribute("data-turn-key") ||
+    node.getAttribute("data-chatgpt-selection-message-id") ||
     node.getAttribute("data-turn-id") ||
     node.querySelector("[data-turn-id]")?.getAttribute("data-turn-id") ||
     node.getAttribute("data-message-id") ||
@@ -655,13 +657,19 @@ const getConversationScrollController = () => {
     };
   }
 
+  const reverse =
+    typeof isConversationReverseScrollRoot === "function" &&
+    isConversationReverseScrollRoot(scrollRoot);
+  const getMaxTop = () => Math.max(0, scrollRoot.scrollHeight - scrollRoot.clientHeight);
+
   return {
     isDocumentLike: false,
     viewportHeight: Math.max(1, scrollRoot.clientHeight || 1),
-    getTop: () => Math.max(0, scrollRoot.scrollTop || 0),
-    getMaxTop: () => Math.max(0, scrollRoot.scrollHeight - scrollRoot.clientHeight),
+    getTop: () => reverse ? getMaxTop() + scrollRoot.scrollTop : Math.max(0, scrollRoot.scrollTop || 0),
+    getMaxTop,
     setTop: (top, behavior = "auto") => {
-      scrollRoot.scrollTo({ top, behavior });
+      const clampedTop = Math.min(Math.max(0, top), getMaxTop());
+      scrollRoot.scrollTo({ top: reverse ? clampedTop - getMaxTop() : clampedTop, behavior });
     },
   };
 };
@@ -1060,7 +1068,11 @@ const getTimelineViewportMetrics = (scrollRoot = getTimelineActiveScrollRoot()) 
     return fallbackViewport;
   }
 
-  const top = Math.max(0, scrollRoot.scrollTop);
+  const maxTop = Math.max(0, scrollRoot.scrollHeight - rootHeight);
+  const top =
+    typeof isConversationReverseScrollRoot === "function" && isConversationReverseScrollRoot(scrollRoot)
+      ? maxTop + scrollRoot.scrollTop
+      : Math.max(0, scrollRoot.scrollTop);
   return {
     top,
     bottom: top + rootHeight,

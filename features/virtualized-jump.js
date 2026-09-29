@@ -130,6 +130,8 @@ const getDomMessageIdCandidates = (node) => {
   };
 
   addCandidate(node.getAttribute("data-message-id"));
+  addCandidate(node.getAttribute("data-turn-key"));
+  addCandidate(node.getAttribute("data-chatgpt-selection-message-id"));
   addCandidate(node.getAttribute("data-turn-id"));
   addCandidate(node.getAttribute("data-turn-id-container"));
   addCandidate(node.querySelector("[data-message-id]")?.getAttribute("data-message-id"));
@@ -423,6 +425,8 @@ const getVirtualJumpMessageRoot = (element) => {
   }
 
   return (
+    element.closest("[data-chatgpt-selection-message-id]") ||
+    element.closest("[data-turn-key]") ||
     element.closest("[data-turn][data-turn-id]") ||
     element.closest("[data-turn-id]") ||
     element.closest("[data-message-id]") ||
@@ -438,7 +442,7 @@ const queryMessageNodeById = (messageId) => {
   }
 
   const candidates = Array.from(
-    document.querySelectorAll("[data-message-id], [data-turn-id], [data-turn-id-container]"),
+    document.querySelectorAll("[data-message-id], [data-turn-id], [data-turn-id-container], [data-turn-key], [data-chatgpt-selection-message-id]"),
   );
   for (const candidate of candidates) {
     if (!(candidate instanceof HTMLElement)) {
@@ -446,6 +450,8 @@ const queryMessageNodeById = (messageId) => {
     }
     const value =
       candidate.getAttribute("data-message-id") ||
+      candidate.getAttribute("data-turn-key") ||
+      candidate.getAttribute("data-chatgpt-selection-message-id") ||
       candidate.getAttribute("data-turn-id") ||
       candidate.getAttribute("data-turn-id-container") ||
       "";
@@ -709,11 +715,17 @@ const getVirtualJumpScrollController = () => {
   const documentLike =
     typeof isConversationDocumentScrollRoot === "function" &&
     isConversationDocumentScrollRoot(root);
+  const reverse =
+    !documentLike &&
+    typeof isConversationReverseScrollRoot === "function" &&
+    isConversationReverseScrollRoot(root);
 
   const getTop = () =>
     documentLike
       ? window.scrollY || window.pageYOffset || document.documentElement?.scrollTop || 0
-      : root.scrollTop;
+      : reverse
+        ? getMaxTop() + root.scrollTop
+        : root.scrollTop;
   const getHeight = () =>
     documentLike
       ? window.innerHeight || document.documentElement?.clientHeight || root.clientHeight || 1
@@ -733,7 +745,7 @@ const getVirtualJumpScrollController = () => {
       window.scrollTo({ top: clampedTop, behavior });
       return;
     }
-    root.scrollTo({ top: clampedTop, behavior });
+    root.scrollTo({ top: reverse ? clampedTop - getMaxTop() : clampedTop, behavior });
   };
 
   return {

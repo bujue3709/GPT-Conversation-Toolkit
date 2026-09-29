@@ -6,16 +6,15 @@ A browser extension for `ChatGPT Web` focused on full-session export, in-page se
 
 Current active maintainer: `bujue3709` (primary / sole active maintainer)
 
-Current version: `v1.4.3`
+Current version: `v1.4.4`
 
-## What's New in v1.4.3 (2026-09-17)
+## What's New in v1.4.4 (2026-09-29)
 
-- Added `.png` long-image export.
-- PNG output is generated from complete export data rather than the current viewport DOM. When the API is unavailable, the UI clearly states that only currently available loaded/cached messages are included.
-- Added a fixed `1080px`, white-background reading layout with readable headings, paragraphs, bold text, inline code, code blocks, quotes, lists, dividers, and basic tables.
-- Long conversations paginate between messages first. Only a single over-height message is split by content structure, with `User · continued` / `ChatGPT · continued` labels on continuation pages.
-- Multi-page exports download sequentially as `part-01`, `part-02`, and so on. Only one large Canvas exists at a time and is released after its PNG Blob is produced.
-- Added generation progress, a duplicate-task lock, and separate data retrieval, image rendering, content-too-large, and unknown-error messages.
+- Adapted folders and conversation sorting to the updated ChatGPT sidebar.
+- Added a "Load all conversations" button next to "New folder". The folder area stays blurred while conversations load and shows the complete sorting result when loading finishes.
+- Fixed timeline nodes failing to jump to their messages in the updated reverse-scrolling conversation view.
+
+The maintainer recently underwent surgery and has only now had time to review and address issues. Thank you for your patience.
 
 ## ChatGPT Virtualized List Impact (Important)
 
@@ -194,6 +193,7 @@ The toolbar footer also includes two lightweight links:
 - You can drag folder headers to reorder folders.
 - Folder management only adds local classification and ordering in the sidebar. It does not replace native conversation nodes, so native rename, archive, and other built-in conversation actions remain available.
 - Folder structure, assignments, collapse state, and order are persisted locally and restored after refresh.
+- Click “Load all” to read later native sidebar chat batches. The chat and folder list is blurred while loading, then restored after classification along with the original sidebar scroll position. The button can cancel loading.
 
 ### Settings Panel
 

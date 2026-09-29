@@ -15,10 +15,15 @@ const FOLDER_HEADER_CLASS = "chatgpt-toolkit-folder-header";
 const FOLDER_EMPTY_CLASS = "chatgpt-toolkit-folder-empty";
 const FOLDER_DRAGGING_ATTR = "data-toolkit-folder-dragging";
 const FOLDER_SORTING_ATTR = "data-toolkit-folder-sorting";
+const FOLDER_CONVERSATION_SELECTOR = 'a[href*="/c/"][data-sidebar-item="true"], a[href*="/c/"][data-interactive-row-link="true"]';
 const FOLDER_MISSING_SECTION_RETRY_LIMIT = 120;
 const FOLDER_MISSING_SECTION_RETRY_DELAY_MS = 180;
 const FOLDER_MISSING_SECTION_RETRY_SLOW_DELAY_MS = 520;
 const FOLDER_MISSING_SECTION_RETRY_HIDDEN_DELAY_MS = 2000;
+const FOLDER_LOADING_ATTR = "data-toolkit-folder-loading";
+const FOLDER_MANAGER_LOADING_ATTR = "data-toolkit-folder-loading-manager";
+const FOLDER_PRELOAD_POLL_MS = 200;
+const FOLDER_PRELOAD_TIMEOUT_MS = 60000;
 const FOLDER_CONVERSATION_DRAG_BLOCK_SELECTOR =
   "button, input, textarea, select, option, [role='button'], [data-trailing-button], [data-folder-action], [contenteditable='true']";
 const FOLDER_POINTER_DRAG_GUARD_MS = 1200;
@@ -26,6 +31,9 @@ const FOLDER_POINTER_DRAG_GUARD_MS = 1200;
 let folderPointerDownDragBlocked = false;
 let folderPointerDownConversationId = "";
 let folderPointerDownAt = 0;
+let folderPreloadSession = null;
+let folderLoadStatus = "idle";
+let folderLoadedCount = 0;
 
 const getSafeEventTarget = (event) => (event?.target instanceof Element ? event.target : null);
 
@@ -255,6 +263,13 @@ const findFolderHistoryRoot = (section) => {
     if (sectionHistory instanceof HTMLElement) {
       return sectionHistory;
     }
+    if (section.matches('[data-app-action-sidebar-section-heading="Recents"]')) {
+      const firstRow = section.querySelector('[data-sidebar-chatgpt-conversation-key]');
+      const recentList = firstRow?.parentElement || section.querySelector('[data-appearance] > div');
+      if (recentList instanceof HTMLElement) {
+        return recentList;
+      }
+    }
   }
 
   const fallbackHistory = document.querySelector('nav[aria-label] #history, #history');
@@ -264,6 +279,11 @@ const findFolderHistoryRoot = (section) => {
 const findFolderHeaderButton = (section, history = null) => {
   if (!(section instanceof HTMLElement)) {
     return null;
+  }
+
+  const recentToggle = section.querySelector('[data-app-action-sidebar-section-toggle]');
+  if (recentToggle instanceof HTMLElement) {
+    return recentToggle;
   }
 
   const resolvedHistory = history instanceof HTMLElement ? history : findFolderHistoryRoot(section);
@@ -324,6 +344,16 @@ const findFolderAnchor = () => {
         history: existingHistory,
       };
     }
+  }
+
+  const recentSection = document.querySelector('nav section[data-app-action-sidebar-section-heading="Recents"]');
+  const recentHistory = findFolderHistoryRoot(recentSection);
+  if (recentSection instanceof HTMLElement && recentHistory instanceof HTMLElement) {
+    return {
+      section: recentSection,
+      headerButton: findFolderHeaderButton(recentSection, recentHistory),
+      history: recentHistory,
+    };
   }
 
   const history = findFolderHistoryRoot();
@@ -402,12 +432,173 @@ const findChatHistorySection = () => {
 const getConversationItems = (history) =>
   !(history instanceof HTMLElement)
     ? []
-    : Array.from(history.querySelectorAll('a[data-sidebar-item="true"][href*="/c/"]')).filter((item) => {
+    : Array.from(history.querySelectorAll(FOLDER_CONVERSATION_SELECTOR)).filter((item) => {
         if (!(item instanceof HTMLAnchorElement) || !history.contains(item)) {
           return false;
         }
         return getConversationPresentationNode(item, history) instanceof HTMLElement;
       });
+
+const getFolderManagerLabel = () => {
+  if (folderLoadStatus === "loading") {
+    return t("folder.managerLoading", { count: folderLoadedCount });
+  }
+  if (folderLoadStatus === "complete") {
+    return t("folder.managerLoaded", { count: folderLoadedCount });
+  }
+  if (folderLoadStatus === "failed") {
+    return t("folder.managerLoadFailed", { count: folderLoadedCount });
+  }
+  return t("folder.managerLabel");
+};
+
+const syncFolderLoadControls = () => {
+  const manager = document.getElementById(FOLDER_MANAGER_ID);
+  const label = manager?.querySelector(".chatgpt-toolkit-folder-manager-label");
+  if (label instanceof HTMLElement) {
+    label.textContent = getFolderManagerLabel();
+  }
+  const button = manager?.querySelector('[data-folder-action="load-all"]');
+  if (button instanceof HTMLButtonElement) {
+    button.textContent = t(
+      folderLoadStatus === "loading" ? "folder.cancelLoad" :
+      folderLoadStatus === "failed" ? "folder.retryLoad" : "folder.loadAll",
+    );
+  }
+};
+
+const setFolderLoadBlur = (history, loading) => {
+  if (!(history instanceof HTMLElement)) {
+    return;
+  }
+  if (loading) {
+    history.setAttribute(FOLDER_LOADING_ATTR, "1");
+    history.setAttribute("aria-busy", "true");
+  } else {
+    history.removeAttribute(FOLDER_LOADING_ATTR);
+    history.removeAttribute("aria-busy");
+  }
+};
+
+const setFolderLoadManagerFloating = (manager, loading) => {
+  if (!(manager instanceof HTMLElement)) {
+    return;
+  }
+  if (loading) {
+    const rect = manager.getBoundingClientRect();
+    manager.style.setProperty("--folder-load-top", `${rect.top}px`);
+    manager.style.setProperty("--folder-load-left", `${rect.left}px`);
+    manager.style.setProperty("--folder-load-width", `${rect.width}px`);
+    manager.setAttribute(FOLDER_MANAGER_LOADING_ATTR, "1");
+  } else {
+    manager.removeAttribute(FOLDER_MANAGER_LOADING_ATTR);
+    manager.style.removeProperty("--folder-load-top");
+    manager.style.removeProperty("--folder-load-left");
+    manager.style.removeProperty("--folder-load-width");
+  }
+};
+
+const stopFolderConversationPreload = (status = "idle", refresh = true) => {
+  const session = folderPreloadSession;
+  if (!session) {
+    return;
+  }
+  folderPreloadSession = null;
+  clearTimeout(session.timer);
+  folderLoadStatus = status;
+  folderLoadedCount = getConversationItems(session.history).length;
+  if (refresh && session.history.isConnected) {
+    session.render();
+  }
+  setFolderLoadBlur(session.history, false);
+  setFolderLoadManagerFloating(session.manager, false);
+  if (session.scrollRoot.isConnected) {
+    session.scrollRoot.scrollTop = session.originalTop;
+  }
+  syncFolderLoadControls();
+};
+
+const preloadFolderConversations = (options = {}) => {
+  if (folderPreloadSession) {
+    stopFolderConversationPreload();
+    return;
+  }
+  const anchor = options.anchor || findFolderAnchor();
+  const history = anchor?.history;
+  const section = anchor?.section;
+  if (!(history instanceof HTMLElement) || !(section instanceof HTMLElement)) {
+    folderLoadStatus = "failed";
+    syncFolderLoadControls();
+    return;
+  }
+
+  let scrollRoot = options.scrollRoot || section.parentElement;
+  while (scrollRoot instanceof HTMLElement && scrollRoot !== document.body) {
+    const overflowY = getComputedStyle(scrollRoot).overflowY;
+    if (overflowY === "auto" || overflowY === "scroll") {
+      break;
+    }
+    scrollRoot = scrollRoot.parentElement;
+  }
+  if (!(scrollRoot instanceof HTMLElement) || scrollRoot === document.body) {
+    folderLoadStatus = "failed";
+    syncFolderLoadControls();
+    return;
+  }
+
+  const session = {
+    history,
+    section,
+    scrollRoot,
+    originalTop: scrollRoot.scrollTop,
+    startedAt: Date.now(),
+    lastCount: getConversationItems(history).length,
+    stablePolls: 0,
+    sawLoading: false,
+    timer: null,
+    manager: document.getElementById(FOLDER_MANAGER_ID),
+    render: options.render || renderFolders,
+  };
+  folderPreloadSession = session;
+  folderLoadStatus = "loading";
+  folderLoadedCount = session.lastCount;
+  setFolderLoadManagerFloating(session.manager, true);
+  setFolderLoadBlur(history, true);
+  syncFolderLoadControls();
+
+  const advance = () => {
+    if (folderPreloadSession !== session) {
+      return;
+    }
+    if (!session.history.isConnected || !scrollRoot.isConnected || document.hidden) {
+      stopFolderConversationPreload("failed", false);
+      return;
+    }
+
+    const count = getConversationItems(session.history).length;
+    const loading = Boolean(session.section.querySelector('[role="status"]'));
+    session.sawLoading ||= loading;
+    session.stablePolls = count > session.lastCount ? 0 : session.stablePolls + 1;
+    session.lastCount = count;
+    if (folderLoadedCount !== count) {
+      folderLoadedCount = count;
+      syncFolderLoadControls();
+    }
+
+    if (Date.now() - session.startedAt >= FOLDER_PRELOAD_TIMEOUT_MS) {
+      stopFolderConversationPreload("failed");
+      return;
+    }
+    if (count > 0 && !loading && session.stablePolls >= (session.sawLoading ? 5 : 10)) {
+      stopFolderConversationPreload("complete");
+      return;
+    }
+
+    scrollRoot.scrollTop = scrollRoot.scrollHeight;
+    session.timer = setTimeout(advance, FOLDER_PRELOAD_POLL_MS);
+  };
+  advance();
+};
 
 const getNativeConversationList = (history) => {
   if (!(history instanceof HTMLElement)) {
@@ -423,7 +614,7 @@ const getNativeConversationList = (history) => {
       ) {
         return false;
       }
-      return child.querySelector('a[data-sidebar-item="true"][href*="/c/"]') instanceof HTMLAnchorElement;
+      return child.querySelectorAll(FOLDER_CONVERSATION_SELECTOR).length > 1;
     }) || null
   );
 };
@@ -431,6 +622,11 @@ const getNativeConversationList = (history) => {
 const getConversationPresentationNode = (item, history = folderState.history) => {
   if (!(item instanceof HTMLAnchorElement) || !(history instanceof HTMLElement) || !history.contains(item)) {
     return null;
+  }
+
+  const directNode = findDirectSectionChild(history, item);
+  if (directNode?.hasAttribute("data-sidebar-chatgpt-conversation-key")) {
+    return directNode;
   }
 
   const nativeList = getNativeConversationList(history);
@@ -444,7 +640,7 @@ const getConversationPresentationNode = (item, history = folderState.history) =>
     }
   }
 
-  return item.parentElement === history ? item : null;
+  return findDirectSectionChild(history, item);
 };
 
 const getConversationAnchorFromNode = (node, history = folderState.history) => {
@@ -457,8 +653,7 @@ const getConversationAnchorFromNode = (node, history = folderState.history) => {
   }
 
   const item =
-    node.querySelector(':scope > a[data-sidebar-item="true"][href*="/c/"]') ||
-    node.querySelector('a[data-sidebar-item="true"][href*="/c/"]');
+    node.querySelector(FOLDER_CONVERSATION_SELECTOR);
   if (!(item instanceof HTMLAnchorElement)) {
     return null;
   }
@@ -487,7 +682,7 @@ const getConversationItemFromTarget = (target) => {
     return null;
   }
 
-  const item = target.closest('a[data-sidebar-item="true"][href*="/c/"]');
+  const item = target.closest(FOLDER_CONVERSATION_SELECTOR);
   if (
     !(item instanceof HTMLAnchorElement) ||
     !folderState.history.contains(item) ||
@@ -1756,6 +1951,7 @@ const clearHistoryPresentation = (history) => {
 };
 
 const cleanupFolderUi = () => {
+  stopFolderConversationPreload("idle", false);
   clearHistoryPresentation(folderState.history);
 
   const manager = document.getElementById(FOLDER_MANAGER_ID);
@@ -1813,7 +2009,7 @@ const ensureFolderManager = (section, headerButton) => {
     manager.id = FOLDER_MANAGER_ID;
     manager.className = "chatgpt-toolkit-folder-manager";
     manager.setAttribute(FOLDER_THEME_TARGET_ATTR, "folders");
-    manager.innerHTML =       '<div class="chatgpt-toolkit-folder-manager-label">' + t("folder.managerLabel") + '</div>' +
+    manager.innerHTML =       '<div class="chatgpt-toolkit-folder-manager-label">' + getFolderManagerLabel() + '</div>' +
       '<div class="chatgpt-toolkit-folder-manager-actions">' +
         '<button type="button" class="chatgpt-toolkit-folder-pill" data-folder-action="show-ungrouped">' +
           '<span>' + t("folder.ungrouped") + '</span>' +
@@ -1821,6 +2017,9 @@ const ensureFolderManager = (section, headerButton) => {
         '</button>' +
         '<button type="button" class="chatgpt-toolkit-folder-pill is-primary" data-folder-action="create">' +
           t("folder.create") +
+        '</button>' +
+        '<button type="button" class="chatgpt-toolkit-folder-pill" data-folder-action="load-all">' +
+          t("folder.loadAll") +
         '</button>' +
       '</div>';
   }
@@ -1839,6 +2038,11 @@ const ensureFolderManager = (section, headerButton) => {
 
       if (actionButton.dataset.folderAction === "create") {
         createFolder();
+        return;
+      }
+
+      if (actionButton.dataset.folderAction === "load-all") {
+        preloadFolderConversations();
         return;
       }
 
@@ -1870,6 +2074,8 @@ const ensureFolderManager = (section, headerButton) => {
     }
   }
 
+  syncFolderLoadControls();
+
   return manager;
 };
 
@@ -1878,7 +2084,7 @@ const refreshFolderLocalization = () => {
   if (manager instanceof HTMLElement) {
     const label = manager.querySelector(".chatgpt-toolkit-folder-manager-label");
     if (label instanceof HTMLElement) {
-      label.textContent = t("folder.managerLabel");
+      label.textContent = getFolderManagerLabel();
     }
 
     const ungrouped = manager.querySelector('[data-folder-action="show-ungrouped"] > span');
@@ -1890,6 +2096,7 @@ const refreshFolderLocalization = () => {
     if (create instanceof HTMLButtonElement) {
       create.textContent = t("folder.create");
     }
+    syncFolderLoadControls();
   }
 
   const menu = document.getElementById(FOLDER_MENU_ID);
@@ -2327,6 +2534,15 @@ const renderFolders = () => {
 
   folderState.history = history;
   folderState.nativeList = getNativeConversationList(history);
+  if (folderPreloadSession && folderPreloadSession.section === section) {
+    if (folderPreloadSession.history !== history) {
+      setFolderLoadBlur(folderPreloadSession.history, false);
+      folderPreloadSession.history = history;
+      folderPreloadSession.lastCount = getConversationItems(history).length;
+      folderPreloadSession.stablePolls = 0;
+    }
+    setFolderLoadBlur(history, true);
+  }
 
   bindFolderHistoryEvents(history);
 

@@ -65,6 +65,7 @@ const getStrictConversationId = () => {
 };
 
 const MESSAGE_TURN_SELECTOR = [
+  "[data-turn-key]",
   "section[data-turn][data-turn-id]",
   "[data-turn][data-turn-id]",
   '[data-testid^="conversation-turn-"]',
@@ -80,6 +81,7 @@ const MESSAGE_ROLE_SELECTOR = [
 
 const MESSAGE_ROOT_SELECTOR = [
   MESSAGE_TURN_SELECTOR,
+  "[data-chatgpt-selection-message-id]",
   "[data-turn-id-container]",
   "[data-message-id]",
   "article",
@@ -114,9 +116,16 @@ const isConversationDocumentScrollRoot = (root) =>
   root === document.documentElement ||
   root === document.body;
 
+const isConversationReverseScrollRoot = (root) =>
+  root instanceof HTMLElement && window.getComputedStyle(root).flexDirection === "column-reverse";
+
 const resolveConversationScrollRoot = () => {
   const main = getConversationMain();
   if (main instanceof HTMLElement) {
+    const timelineRoot = main.querySelector('[data-app-action-timeline-scroll]');
+    if (timelineRoot instanceof HTMLElement && timelineRoot.scrollHeight > timelineRoot.clientHeight + 24) {
+      return timelineRoot;
+    }
     const mainRoot = main.closest("[data-scroll-root]");
     if (mainRoot instanceof HTMLElement) {
       return mainRoot;
@@ -197,8 +206,11 @@ const scrollElementIntoConversationView = (element, options = {}) => {
   }
 
   const maxTop = Math.max(0, scrollRoot.scrollHeight - scrollRoot.clientHeight);
+  const reverse = isConversationReverseScrollRoot(scrollRoot);
+  const minTop = reverse ? -maxTop : 0;
+  const maxNativeTop = reverse ? 0 : maxTop;
   scrollRoot.scrollTo({
-    top: Math.min(Math.max(0, top), maxTop),
+    top: Math.min(Math.max(minTop, top), maxNativeTop),
     behavior,
   });
 };
@@ -274,6 +286,10 @@ const normalizeMessageNode = (node) => {
   if (!(node instanceof Element)) {
     return null;
   }
+  const selectedMessage = node.closest("[data-chatgpt-selection-message-id]");
+  if (selectedMessage instanceof HTMLElement) {
+    return selectedMessage;
+  }
   const nestedTurn = node.matches("[data-turn-id-container]")
     ? node.querySelector(MESSAGE_TURN_SELECTOR)
     : null;
@@ -294,6 +310,13 @@ const getNodeConversationId = (node) =>
   null;
 
 const getMessageNodeKey = (node, index) => {
+  const currentMessageId =
+    node?.getAttribute?.("data-chatgpt-selection-message-id") ||
+    node?.getAttribute?.("data-turn-key") ||
+    "";
+  if (currentMessageId) {
+    return `mid:${currentMessageId}`;
+  }
   const turnId =
     node?.getAttribute?.("data-turn-id") ||
     node?.querySelector?.("[data-turn-id]")?.getAttribute("data-turn-id") ||
@@ -661,6 +684,13 @@ const readRoleFromElement = (element) => {
     return "";
   }
 
+  if (element.hasAttribute("data-chatgpt-selection-message-id")) {
+    return "assistant";
+  }
+  if (element.hasAttribute("data-turn-key") && element.querySelector("[data-user-message-bubble]")) {
+    return "user";
+  }
+
   const explicitRole =
     element.getAttribute("data-message-author-role") ||
     element.getAttribute("data-turn") ||
@@ -715,6 +745,13 @@ const detectRole = (node) => {
 const getMessageTextContainers = (node) => {
   if (!(node instanceof HTMLElement)) {
     return [];
+  }
+
+  if (node.hasAttribute("data-turn-key")) {
+    const bubble = node.querySelector("[data-user-message-bubble]");
+    if (bubble instanceof HTMLElement) {
+      return [bubble];
+    }
   }
 
   const roleContainers = toUniqueOutermostElements([
