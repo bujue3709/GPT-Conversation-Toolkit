@@ -678,11 +678,25 @@ const isConversationPresentationNode = (node, history = folderState.history) =>
   getConversationAnchorFromNode(node, history) instanceof HTMLAnchorElement;
 
 const getConversationItemFromTarget = (target) => {
-  if (!(target instanceof Element) || !(folderState.history instanceof HTMLElement)) {
+  if (
+    !(target instanceof Element) ||
+    !(folderState.history instanceof HTMLElement) ||
+    !folderState.history.contains(target)
+  ) {
     return null;
   }
 
-  const item = target.closest(FOLDER_CONVERSATION_SELECTOR);
+  let item = target.closest(FOLDER_CONVERSATION_SELECTOR);
+  // The native row now wraps the link, title and action buttons separately.
+  // Drops on the row's padding still need to resolve to that conversation.
+  if (!(item instanceof HTMLAnchorElement)) {
+    for (let node = target; node instanceof HTMLElement && node !== folderState.history; node = node.parentElement) {
+      item = getConversationAnchorFromNode(node, folderState.history);
+      if (item instanceof HTMLAnchorElement) {
+        break;
+      }
+    }
+  }
   if (
     !(item instanceof HTMLAnchorElement) ||
     !folderState.history.contains(item) ||
@@ -705,7 +719,8 @@ const isConversationDragBlockedTarget = (target, conversationItem = null) => {
   }
 
   if (conversationItem instanceof HTMLAnchorElement) {
-    return conversationItem.contains(blockedTarget);
+    const presentationNode = getConversationPresentationNode(conversationItem) || conversationItem;
+    return presentationNode.contains(blockedTarget);
   }
 
   return getConversationItemFromTarget(target) instanceof HTMLAnchorElement;
@@ -761,6 +776,27 @@ const trackFolderPointerDownDragGuard = (event) => {
     conversationItem instanceof HTMLAnchorElement ? getConversationIdFromItem(conversationItem) : "";
   folderPointerDownDragBlocked =
     conversationItem instanceof HTMLAnchorElement && isConversationDragBlockedTarget(target, conversationItem);
+  stopNativeConversationPointerDrag(event);
+};
+
+const stopNativeConversationPointerDrag = (event) => {
+  if ((event.button !== undefined && event.button !== 0) || (event.pointerType && event.pointerType !== "mouse")) {
+    return;
+  }
+
+  const target = getSafeEventTarget(event);
+  const item = getConversationItemFromTarget(target);
+  if (
+    !(item instanceof HTMLAnchorElement) ||
+    !getConversationIdFromItem(item) ||
+    isConversationDragBlockedTarget(target, item)
+  ) {
+    return;
+  }
+
+  // Keep the browser's HTML drag default, but prevent ChatGPT's pointer/mouse
+  // sensors from starting a second drag and cancelling the native dragstart.
+  event.stopPropagation();
 };
 
 const shouldBlockConversationDragStart = (event, conversationItem) => {
@@ -787,7 +823,8 @@ const getConversationIdFromItem = (item) => {
     return "";
   }
 
-  const href = item.getAttribute("href") || "";
+  const anchor = item instanceof HTMLAnchorElement ? item : item.querySelector(FOLDER_CONVERSATION_SELECTOR);
+  const href = anchor?.getAttribute("href") || item.getAttribute("href") || "";
   const matched = href.match(/\/c\/([^/?#]+)/);
   if (matched?.[1]) {
     return matched[1];
@@ -834,7 +871,7 @@ const getFolderFlowNodes = () => {
     conversationNodes.push(node);
   });
 
-  return [...directChildren, ...conversationNodes].sort((left, right) => {
+  return Array.from(new Set([...directChildren, ...conversationNodes])).sort((left, right) => {
     const leftOrder = Number(left.style.order);
     const rightOrder = Number(right.style.order);
     const normalizedLeftOrder = Number.isFinite(leftOrder) ? leftOrder : Number.MAX_SAFE_INTEGER;
@@ -2887,6 +2924,7 @@ const handleFolderDragStart = (event) => {
       return;
     }
 
+    event.stopPropagation();
     folderState.draggingFolderId = folderId;
     folderState.draggingConversationId = null;
     prepareFolderDragLayout("folder-sort");
@@ -2919,6 +2957,7 @@ const handleFolderDragStart = (event) => {
     return;
   }
 
+  event.stopPropagation();
   folderState.draggingConversationId = conversationId;
   folderState.draggingFolderId = null;
   prepareFolderDragLayout("conversation");
@@ -2944,6 +2983,7 @@ const handleFolderDragOver = (event) => {
     }
 
     event.preventDefault();
+    event.stopPropagation();
     if (event.dataTransfer) {
       event.dataTransfer.dropEffect = "move";
     }
@@ -2962,6 +3002,7 @@ const handleFolderDragOver = (event) => {
   }
 
   event.preventDefault();
+  event.stopPropagation();
   if (event.dataTransfer) {
     event.dataTransfer.dropEffect = "move";
   }
@@ -2979,6 +3020,7 @@ const handleFolderDrop = (event) => {
     }
 
     event.preventDefault();
+    event.stopPropagation();
     reorderFolders(draggedFolderId, placement.targetFolderId, placement.position);
     return;
   }
@@ -2996,6 +3038,7 @@ const handleFolderDrop = (event) => {
   }
 
   event.preventDefault();
+  event.stopPropagation();
 
   if (dropZone.type === "ungrouped") {
     unassignConversation(conversationId);
@@ -3027,6 +3070,7 @@ const bindFolderGlobalEvents = () => {
   folderState.initialized = true;
 
   document.addEventListener("pointerdown", trackFolderPointerDownDragGuard, true);
+  document.addEventListener("mousedown", stopNativeConversationPointerDrag, true);
   document.addEventListener("dragstart", handleFolderDragStart, true);
   document.addEventListener("dragover", handleFolderDragOver, true);
   document.addEventListener("drop", handleFolderDrop, true);

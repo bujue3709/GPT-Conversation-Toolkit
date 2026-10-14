@@ -6,13 +6,13 @@ A browser extension for `ChatGPT Web` focused on full-session export, in-page se
 
 Current active maintainer: `bujue3709` (primary / sole active maintainer)
 
-Current version: `v1.4.4`
+Current version: `v1.4.5`
 
-## What's New in v1.4.4 (2026-09-29)
+## What's New in v1.4.5 (2026-10-14)
 
-- Adapted folders and conversation sorting to the updated ChatGPT sidebar.
-- Added a "Load all conversations" button next to "New folder". The folder area stays blurred while conversations load and shows the complete sorting result when loading finishes.
-- Fixed timeline nodes failing to jump to their messages in the updated reverse-scrolling conversation view.
+- Fixed conversations failing to drag into folders in the updated ChatGPT sidebar.
+- Restored conversation reordering within folders, including drops on conversation rows and adjacent gaps.
+- Resolved conflicts with native sidebar dragging while preserving menus, rename inputs, and right-click interactions.
 
 The maintainer recently underwent surgery and has only now had time to review and address issues. Thank you for your patience.
 
