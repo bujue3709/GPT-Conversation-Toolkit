@@ -22,6 +22,30 @@ const exportSelectionState = {
   preparationController: null,
 };
 
+let exportSelectionProgressTimer = null;
+let exportSelectionProgressStarted = 0;
+const updateExportSelectionProgress = (message, tone = "info") => {
+  const modal = getExportSelectionModal();
+  if (!modal || !exportSelectionState.isOpen) return;
+  const status = modal.querySelector("[data-export-selection-progress]");
+  if (status && message !== undefined) {
+    status.hidden = false;
+    status.textContent = message;
+    status.dataset.tone = tone;
+  }
+  const busy = exportInProgress;
+  modal.setAttribute("aria-busy", String(busy));
+  const button = modal.querySelector("[data-export-selection-export-button]");
+  if (button) {
+    button.disabled = busy || !getExportSelectionResultPreview()?.messageCount;
+    button.textContent = t(busy ? "exportImages.running" : "exportSelection.export");
+  }
+  modal.querySelectorAll("select, input, [data-export-selection-action='select-all'], [data-export-selection-action='clear'], [data-export-selection-action='invert']").forEach(control => { control.disabled = busy; });
+  if (!busy) {
+    clearInterval(exportSelectionProgressTimer);
+    exportSelectionProgressTimer = null;
+  }
+};
 let exportSelectionEscapeBound = false;
 
 const escapeExportSelectionHtml = (value) =>
@@ -67,6 +91,8 @@ const resetExportSelectionState = () => {
 };
 
 const closeExportSelectionModal = () => {
+  clearInterval(exportSelectionProgressTimer);
+  exportSelectionProgressTimer = null;
   cancelConversationExport();
   exportSelectionState.preparationController?.abort();
   exportSelectionState.preparationController = null;
@@ -264,6 +290,8 @@ const renderExportSelectionModal = () => {
         </label>
       </div>
       ${turnSection}
+      <div data-export-selection-progress role="status" aria-live="polite" hidden></div>
+      <div data-export-selection-elapsed></div>
       <div class="chatgpt-toolkit-prompt-footer">
         <span data-export-selection-result-count>${t("exportSelection.resultCount", { turns: resultPreview?.selectedTurnCount || 0, messages: messageCount })}</span>
         <div class="chatgpt-toolkit-prompt-footer-actions">
@@ -321,7 +349,7 @@ const updateExportSelectionInteractiveUi = () => {
   }
   const exportButton = modal.querySelector("[data-export-selection-export-button]");
   if (exportButton instanceof HTMLButtonElement) {
-    exportButton.disabled = messageCount <= 0;
+    exportButton.disabled = exportInProgress || messageCount <= 0;
   }
   syncExportSelectionVisibleTurns();
 };
@@ -439,6 +467,13 @@ const handleExportSelectionAction = async (action) => {
     renderExportSelectionPage();
     return;
   } else if (action === "export") {
+    if (exportInProgress) return;
+    exportSelectionProgressStarted = Date.now();
+    clearInterval(exportSelectionProgressTimer);
+    exportSelectionProgressTimer = setInterval(() => {
+      const elapsed = getExportSelectionModal()?.querySelector("[data-export-selection-elapsed]");
+      if (elapsed) elapsed.textContent = t("exportImages.elapsed", { seconds: Math.floor((Date.now() - exportSelectionProgressStarted) / 1000) });
+    }, 1000);
     const config = {
       exportFormat: exportSelectionState.format,
       exportRole: exportSelectionState.roleFilter,

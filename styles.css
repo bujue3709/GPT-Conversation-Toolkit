@@ -2361,3 +2361,7 @@ html[data-toolkit-folder-sorting="1"] .chatgpt-toolkit-folder-header[draggable="
     justify-content: flex-start;
   }
 }
+
+[data-export-selection-progress] { margin-top: 12px; overflow-wrap: anywhere; }
+[data-export-selection-progress][data-tone="warn"] { color: #b45309; }
+[data-export-selection-elapsed] { margin-top: 6px; font-size: 12px; opacity: .8; }

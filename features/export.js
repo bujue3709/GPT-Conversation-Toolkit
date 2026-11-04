@@ -70,6 +70,8 @@ const exportMessages = async (options = {}) => {
   exportInProgress = true;
   exportAbortController = new AbortController();
   try {
+    updateStatusByKey("status.exportPreparing", "info");
+    await new Promise(resolve => setTimeout(resolve, 0));
     const preparedExport = options.preparedExport?.payload
       ? options.preparedExport
       : await prepareConversationExportPayload({ ...options, signal: exportAbortController.signal });
@@ -122,6 +124,7 @@ const exportMessages = async (options = {}) => {
     return null;
   } finally {
     exportInProgress = false;
+    if (typeof updateExportSelectionProgress === "function") updateExportSelectionProgress();
     exportAbortController = null;
   }
 };

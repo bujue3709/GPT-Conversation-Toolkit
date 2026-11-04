@@ -877,6 +877,7 @@ const buildMessagePayloadFromEntries = (entries) =>
   }));
 
 const updateStatus = (message, tone = "info") => {
+  if (typeof updateExportSelectionProgress === "function") updateExportSelectionProgress(message, tone);
   const status = document.getElementById(STATUS_ID);
   if (!status) {
     return;
@@ -888,6 +889,7 @@ const updateStatus = (message, tone = "info") => {
 };
 
 const updateStatusByKey = (key, tone = "info", params = {}) => {
+  if (typeof updateExportSelectionProgress === "function") updateExportSelectionProgress(t(key, params), tone);
   const status = document.getElementById(STATUS_ID);
   if (!status) {
     return;

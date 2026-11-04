@@ -411,9 +411,11 @@ const conversation = {
           .catch(() => {});
       },
     );
+    await page.locator('[data-action="export"]').click();
+    await page.locator("[data-export-selection-export-button]").waitFor();
     const cancelled = extension(async () => {
       const image = makeExportImage("https://fixture-images.example/slow.png");
-      return await exportMessages({
+      const options = {
         preparedExport: {
           payload: {
             messages: [
@@ -428,10 +430,19 @@ const conversation = {
         },
         format: "md",
         includeImages: true,
-      });
+      };
+      exportSelectionState.preparedExport = options.preparedExport;
+      exportSelectionState.format = options.format;
+      exportSelectionState.includeImages = true;
+      await handleExportSelectionAction("export");
+      return null;
     });
     await started;
-    await extension(() => cancelConversationExport());
+    assert(await page.locator("[data-export-selection-export-button]").isDisabled());
+    assert((await page.locator("[data-export-selection-progress]").innerText()).includes("1"));
+    await page.waitForFunction(() => document.querySelector("[data-export-selection-elapsed]")?.textContent.includes("1"));
+    await page.locator(".chatgpt-toolkit-export-panel").screenshot({ path: path.join(output, "export-progress.png") });
+    await page.locator('[data-export-selection-action="close"]').last().click();
     releaseImage();
     assert.equal(await cancelled, null);
     assert.equal(await extension(() => exportInProgress), false);

@@ -13,6 +13,8 @@ const i18nState = {
 
 const I18N_MESSAGES = {
   en: {
+    "exportImages.running": "Exporting…",
+    "exportImages.elapsed": "Elapsed: {seconds}s. Images download sequentially (up to 30s each); cancel to stop.",
     "exportImages.label": "Image export",
     "exportImages.textOnly": "Do not download images (keep selected file format)",
     "exportImages.include": "Include images (offline ZIP with Markdown, JSON and originals)",
@@ -232,6 +234,8 @@ const I18N_MESSAGES = {
     "settings.latexCopyFormat.latexDisplay": "LaTeX display (\\[...\\])",
   },
   "zh-CN": {
+    "exportImages.running": "正在导出…",
+    "exportImages.elapsed": "已用时 {seconds} 秒。图片逐张下载，每张最多等待 30 秒；可点击取消停止。",
     "exportImages.label": "图片导出",
     "exportImages.textOnly": "不下载图片（按所选文件格式导出）",
     "exportImages.include": "包含图片（离线 ZIP，含 Markdown、JSON 和原图）",
