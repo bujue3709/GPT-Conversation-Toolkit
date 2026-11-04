@@ -137,6 +137,11 @@ const timelineState = {
   pointerDown: false,
   dragging: false,
   refreshPending: false,
+  countPartial: false,
+  countStale: false,
+  countPending: false,
+  indexBlocked: false,
+  indexUpdatedAt: 0,
 };
 const conversationIndexState = {
   conversationId: "",
@@ -152,6 +157,11 @@ const conversationIndexState = {
   byIndex: new Map(),
   byUserOrder: new Map(),
   loadedAt: 0,
+  updatedAt: 0,
+  failedAt: 0,
+  completeness: null,
+  branchId: "",
+  dataSource: "",
   warnings: [],
   error: null,
 };

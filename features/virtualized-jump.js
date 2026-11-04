@@ -865,6 +865,41 @@ const sleepForVirtualJump = (delayMs) =>
     setTimeout(resolve, delayMs);
   });
 
+/*
+ * Reuse the rendered-window scan instead of querying the whole document again:
+ * one probe attempt already knows every mounted message and its ids.
+ */
+const findJumpTargetInRenderedWindow = (renderedWindow, target) => {
+  const items = Array.isArray(renderedWindow?.items) ? renderedWindow.items : [];
+  if (items.length === 0) {
+    return null;
+  }
+  const wantedId = target?.messageId || "";
+  const wantedIndex = Number.isFinite(target?.index) ? target.index : null;
+  for (const item of items) {
+    const node = item?.node;
+    if (!(node instanceof HTMLElement) || !node.isConnected) {
+      continue;
+    }
+    if (wantedId) {
+      if (item?.message?.messageId === wantedId) {
+        return node;
+      }
+      if (getDomMessageIdCandidates(node).includes(wantedId)) {
+        return node;
+      }
+      continue;
+    }
+    if (wantedIndex !== null && Number.isFinite(item?.index) && item.index === wantedIndex) {
+      return node;
+    }
+    if (isDomNodeLikelyJumpTarget(node, target, { allowWeak: false })) {
+      return node;
+    }
+  }
+  return null;
+};
+
 const getVirtualJumpRetryDelayMs = (delayMs) => {
   const value = Number.isFinite(delayMs) ? delayMs : VIRTUAL_JUMP_RETRY_DELAY_MS;
   return Math.min(
@@ -1214,13 +1249,13 @@ const jumpToConversationMessage = async (target, options = {}) => {
     }
 
     virtualJumpState.attempts = attempt;
-    const resolvedAtAttemptStart = resolveMessageDomNode(normalizedTarget);
-    if (await resolveAndFinish(resolvedAtAttemptStart, "probe", { attempt })) {
-      return { ok: true, node: resolvedAtAttemptStart, reason: "resolved-before-probe" };
-    }
-
     const renderedWindow = getRenderedMessageWindow();
     options.onProgress?.({ attempt, renderedWindow });
+
+    const mountedTarget = findJumpTargetInRenderedWindow(renderedWindow, normalizedTarget);
+    if (await resolveAndFinish(mountedTarget, "probe", { attempt })) {
+      return { ok: true, node: mountedTarget, reason: "resolved-before-probe" };
+    }
 
     if (renderedWindow.signature === virtualJumpState.lastWindowSignature) {
       stagnantWindows += 1;

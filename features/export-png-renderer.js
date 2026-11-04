@@ -1029,30 +1029,44 @@ const exportConversationPng = async (payload, options = {}) => {
 
   const baseFilename = buildConversationExportFilename(payload, "png");
   const watermarkParts = getPngWatermarkParts();
-  for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
+  let zip;
+  try {
+    if (pages.length > 1 && !options.onPage) {
+      const sink = await createExportArchiveSink(buildConversationExportFilename(payload, "zip"));
+      zip = createExportZipWriter(sink, options.signal);
+    }
+    for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
+      options.signal?.throwIfAborted();
+      if (pages.length > 1) {
+        updateStatusByKey("status.pngGeneratingPage", "info", {
+          current: pageIndex + 1,
+          total: pages.length,
+        });
+      }
+      const blob = await renderPngPageToBlob(
+        payload,
+        pages[pageIndex],
+        pageIndex,
+        pages.length,
+        watermarkParts,
+        options,
+      );
+      options.signal?.throwIfAborted();
+      if (options.onPage) await options.onPage(blob, pageIndex);
+      else if (zip) await zip.add(`pages/conversation-${String(pageIndex + 1).padStart(3, "0")}.png`, blob);
+      else downloadPngBlob(
+        blob,
+        buildConversationPngFilename(payload, pageIndex, pages.length, baseFilename),
+      );
+      if (pageIndex + 1 < pages.length) {
+        await yieldPngExportThread();
+      }
+    }
     options.signal?.throwIfAborted();
-    if (pages.length > 1) {
-      updateStatusByKey("status.pngGeneratingPage", "info", {
-        current: pageIndex + 1,
-        total: pages.length,
-      });
-    }
-    const blob = await renderPngPageToBlob(
-      payload,
-      pages[pageIndex],
-      pageIndex,
-      pages.length,
-      watermarkParts,
-      options,
-    );
-    if (options.onPage) await options.onPage(blob, pageIndex);
-    else downloadPngBlob(
-      blob,
-      buildConversationPngFilename(payload, pageIndex, pages.length, baseFilename),
-    );
-    if (pageIndex + 1 < pages.length) {
-      await yieldPngExportThread();
-    }
+    if (zip) await zip.close();
+  } catch (error) {
+    await zip?.abort().catch(() => {});
+    throw error;
   }
 
   if (options.usedFallback) {

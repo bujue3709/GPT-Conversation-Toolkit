@@ -58,7 +58,7 @@ const normalizeExportAttachment = (attachment, index) => {
     normalized.name = attachment.name;
   }
   if (attachment.id) {
-    normalized.id = attachment.id;
+    normalized.id = String(attachment.id).replace(/^(?:sediment|file-service):\/\//i, "");
   }
   if (attachment.mimeType) {
     normalized.mimeType = attachment.mimeType;
@@ -468,7 +468,9 @@ const normalizeApiMessage = (node, index, conversationModel) => {
     return null;
   }
 
-  const parts = extractApiMessageParts(message);
+  const parts = extractApiMessageParts(message).map((part) => ({
+    ...part, text: stripInternalExportImageLinks(part.text || ""),
+  }));
   const markdown = isToolImage ? "" : parts.map((part) => part.text || "").filter(Boolean).join("\n\n");
   const text = markdown.trim();
   const attachments = extractApiAttachments(message);
@@ -542,17 +544,100 @@ const normalizeConversationApiResponse = (data, options = {}) => {
     });
   }
 
+  const assessment = resolveExportCompleteness(options.completeness);
   return buildConversationExportPayload({
     conversationId: options.conversationId || data?.conversation_id || data?.id || "",
     title: resolveConversationTitleFromApi(data),
     url: options.url || window.location.href,
     source: "api",
-    completeness: "complete",
+    completeness: assessment.completeness,
     branchMode: EXPORT_BRANCH_MODE_ACTIVE,
     messages,
-    warnings,
+    warnings: warnings.concat(assessment.warnings),
     apiError: null,
     rawIncluded: Boolean(options.includeRaw),
     raw: options.includeRaw ? data : undefined,
+  });
+};
+
+/*
+ * Completeness is decided by paging metadata plus the message chain, never by
+ * "the chain happens to reach the root".
+ */
+const resolveExportCompleteness = (value) => {
+  if (!value) {
+    return { completeness: "complete", warnings: [] };
+  }
+  if (typeof value === "string") {
+    return { completeness: value, warnings: [] };
+  }
+  if (value.complete === false) {
+    return {
+      completeness: "partial",
+      warnings: ["conversation_history_may_be_partial"],
+    };
+  }
+  return { completeness: "complete", warnings: [] };
+};
+
+/*
+ * Build an export payload from the shared conversation index. This keeps export
+ * working from an already-known complete branch when the conversation endpoint
+ * refuses to answer (403) or the network is gone.
+ */
+const buildConversationExportPayloadFromIndex = (index, options = {}) => {
+  const indexMessages = Array.isArray(index?.messages) ? index.messages : [];
+  if (indexMessages.length === 0) {
+    throw new ExportApiError("EMPTY_EXPORT", "Conversation index has no exportable messages.", {
+      fallbackAllowed: true,
+    });
+  }
+
+  const messages = indexMessages
+    .filter((message) => message && message.role)
+    .map((message) => ({
+      id: message.messageId || "",
+      role: message.role,
+      parentId: message.parentId || "",
+      authorName: message.authorName || "",
+      channel: message.channel || "",
+      endTurn: message.endTurn ?? null,
+      recipient: message.recipient || "",
+      content: Array.isArray(message.content) ? message.content : [],
+      text: message.text || "",
+      markdown: message.markdown || "",
+      createTime: message.createTime || "",
+      updateTime: message.updateTime || "",
+      status: message.status || "",
+      model: message.model || "",
+      attachments: Array.isArray(message.attachments) ? message.attachments : [],
+      images: Array.isArray(message.images) ? message.images : [],
+      parts: Array.isArray(message.parts) ? message.parts : [],
+      metadata: message.metadata || {},
+    }));
+
+  if (messages.length === 0) {
+    throw new ExportApiError("EMPTY_EXPORT", "Conversation index has no exportable messages.", {
+      fallbackAllowed: true,
+    });
+  }
+
+  const warnings = Array.isArray(index?.warnings) ? index.warnings.slice() : [];
+  if (index?.status === "stale") {
+    warnings.push("conversation_index_cached");
+  }
+  const assessment = resolveExportCompleteness(index?.completeness);
+
+  return buildConversationExportPayload({
+    conversationId: index?.conversationId || options.conversationId || "",
+    title: index?.title || "",
+    url: options.url || window.location.href,
+    source: "conversation-index",
+    completeness: assessment.completeness,
+    branchMode: EXPORT_BRANCH_MODE_ACTIVE,
+    messages,
+    warnings: warnings.concat(assessment.warnings),
+    apiError: options.apiError || index?.error || null,
+    rawIncluded: false,
   });
 };

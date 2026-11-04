@@ -5,6 +5,9 @@
   const PAGE_FLAG = "__chatgptConversationToolkitCapturePageInstalled";
   const MESSAGE_SOURCE = "chatgpt-toolkit-conversation-capture";
   const MAX_CAPTURE_TEXT_LENGTH = 20 * 1024 * 1024;
+  const MAX_CONCURRENT_CAPTURES = 2;
+  const READ_TIMEOUT_MS = 15000;
+  let retainedCaptureBytes = 0;
 
   if (window[PAGE_FLAG]) {
     return;
@@ -63,13 +66,28 @@
     );
   };
 
-  let captureInProgress = false;
+  // Fallback for browsers without cross-world Navigation API events.
+  if (!window.navigation) {
+    for (const name of ["pushState", "replaceState"]) {
+      const original = window.history?.[name];
+      if (typeof original !== "function") continue;
+      window.history[name] = function (...args) {
+        const result = original.apply(this, args);
+        window.dispatchEvent(new Event("__chatgptConversationToolkitRouteChange"));
+        return result;
+      };
+    }
+  }
+
+  let activeCaptures = 0;
   const inspectFetchResponse = async (url, response) => {
-    if (captureInProgress || !response || !shouldInspectResponse(url, response)) {
+    if (activeCaptures >= MAX_CONCURRENT_CAPTURES || !response || !shouldInspectResponse(url, response)) {
       return;
     }
     if (Number(response.headers.get("content-length")) > MAX_CAPTURE_TEXT_LENGTH) return;
-    captureInProgress = true;
+    activeCaptures += 1;
+    let bytes = 0;
+    let timeoutId;
     let reader;
     let complete = false;
     try {
@@ -77,12 +95,15 @@
       if (!reader) return;
       const decoder = new TextDecoder();
       const pieces = [];
-      let bytes = 0;
+      const timeout = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error("Capture timed out")), READ_TIMEOUT_MS);
+      });
       while (true) {
-        const { value, done } = await reader.read();
+        const { value, done } = await Promise.race([reader.read(), timeout]);
         if (done) { complete = true; break; }
         bytes += value.byteLength;
-        if (bytes > MAX_CAPTURE_TEXT_LENGTH) return;
+        retainedCaptureBytes += value.byteLength;
+        if (bytes > MAX_CAPTURE_TEXT_LENGTH || retainedCaptureBytes > MAX_CAPTURE_TEXT_LENGTH) return;
         pieces.push(decoder.decode(value, { stream: true }));
       }
       pieces.push(decoder.decode());
@@ -93,7 +114,9 @@
       // Do not await it or cancel ChatGPT's original response.
       if (reader && !complete) reader.cancel().catch(() => {});
       reader?.releaseLock();
-      captureInProgress = false;
+      clearTimeout(timeoutId);
+      retainedCaptureBytes -= bytes;
+      activeCaptures -= 1;
     }
   };
 

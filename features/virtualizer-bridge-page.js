@@ -394,12 +394,12 @@
         attemptedIndex: Number.isFinite(result?.attemptedIndex) ? result.attemptedIndex : null,
         reason: result?.reason || "",
       },
-      "*",
+      window.location.origin,
     );
   };
 
   window.addEventListener("message", async (event) => {
-    if (event.source !== window) {
+    if (event.source !== window || event.origin !== window.location.origin) {
       return;
     }
     const data = event.data;
@@ -407,6 +407,8 @@
       return;
     }
 
+    if (typeof data.requestId !== "string" || data.requestId.length > 128 ||
+        (Array.isArray(data.candidates) && data.candidates.length > 32)) return;
     const requestId = data.requestId || "";
     const candidates = normalizeCandidates(data);
     if (!requestId || candidates.length === 0) {

@@ -1125,8 +1125,8 @@ const ensureFolderMenu = () => {
   menu.className = "chatgpt-toolkit-folder-menu";
   menu.setAttribute(FOLDER_THEME_TARGET_ATTR, "folders");
   menu.innerHTML = `
-    <button type="button" data-folder-menu-action="rename">${t("folder.menuRename")}</button>
-    <button type="button" data-folder-menu-action="delete">${t("folder.menuDelete")}</button>
+    <button type="button" data-folder-menu-action="rename">${tHtml("folder.menuRename")}</button>
+    <button type="button" data-folder-menu-action="delete">${tHtml("folder.menuDelete")}</button>
   `;
   menu.addEventListener("click", (event) => {
     const target = getSafeEventTarget(event);
@@ -2719,7 +2719,7 @@ const renderFolders = () => {
           <span class="chatgpt-toolkit-folder-chevron" aria-hidden="true"></span>
           <span class="chatgpt-toolkit-folder-name"></span>
           <span class="chatgpt-toolkit-folder-count"></span>
-          <button type="button" class="chatgpt-toolkit-folder-menu-btn" data-folder-action="open-menu" aria-label="${t("folder.menuOpenAria")}">
+          <button type="button" class="chatgpt-toolkit-folder-menu-btn" data-folder-action="open-menu" aria-label="${tHtml("folder.menuOpenAria")}">
             <span aria-hidden="true">···</span>
           </button>
         `;

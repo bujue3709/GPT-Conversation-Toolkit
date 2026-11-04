@@ -97,6 +97,17 @@ const splitExportMarkdownImages = (text, addText, addImage) => {
   if (start < text.length) addText(text.slice(start));
 };
 
+// Internal asset URLs are not useful offline. Keep code examples intact by
+// using the same Markdown scanner as image collection.
+const stripInternalExportImageLinks = (text) => {
+  const pieces = [];
+  splitExportMarkdownImages(text || "", (value) => pieces.push(value), (url, alt) => {
+    pieces.push(/^(sediment:|file-service:|sandbox:)/i.test(url)
+      ? `[Image: ${alt}]` : `![${alt}](${url})`);
+  });
+  return pieces.join("");
+};
+
 const collectExportImageContent = (message) => {
   const images = [];
   const content = [];

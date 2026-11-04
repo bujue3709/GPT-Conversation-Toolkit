@@ -24,6 +24,7 @@ for (const entry of [
   "README.md",
   "README.en.md",
   "docs/image-export.md",
+  "docs/reliability.md",
 ])
   add(entry);
 const manifest = JSON.parse(files["manifest.json"]);

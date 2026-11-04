@@ -79,7 +79,8 @@
       return false;
     }
     // Account for UTF-16 storage without retaining a second serialized copy.
-    const estimatedBytes = JSON.stringify(payload).length * 2;
+    let estimatedBytes;
+    try { estimatedBytes = JSON.stringify(payload).length * 2; } catch { return false; }
     if (estimatedBytes > MAX_CAPTURED_BYTES) return false;
 
     const conversationId = getCapturedConversationId(payload, href || url);
@@ -169,12 +170,23 @@
   };
 
   window.addEventListener("message", (event) => {
-    if (event.source !== window || event.data?.source !== MESSAGE_SOURCE) {
+    if (event.source !== window || event.origin !== window.location.origin || event.data?.source !== MESSAGE_SOURCE) {
       return;
     }
     if (event.data?.type !== "conversation") {
       return;
     }
+    // This bridge shares the page's trust boundary; origin checks do not
+    // authenticate other scripts already running on that same page.
+    const { url, data, href } = event.data;
+    try {
+      const endpoint = new URL(url, window.location.href);
+      const match = /^\/backend-api\/conversations?\/([A-Za-z0-9._~-]+)(?:\/messages)?$/.exec(endpoint.pathname);
+      if (endpoint.origin !== window.location.origin || !match) return;
+      if (href && new URL(href).origin !== window.location.origin) return;
+      const payload = findCapturedConversationPayload(data);
+      if (!payload || getCapturedConversationId(payload, url) !== match[1]) return;
+    } catch { return; }
     rememberCapturedConversation(event.data);
   });
 

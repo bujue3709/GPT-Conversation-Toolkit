@@ -2,6 +2,8 @@
  * ChatGPT Conversation Toolkit - DOM utilities
  */
 const getConversationKey = () => {
+  const routeId = window.location.pathname.match(/\/c\/([^/?#]+)/)?.[1];
+  if (routeId) return routeId;
   const domConversationId =
     document
       .querySelector("[data-conversation-id]")
@@ -34,6 +36,9 @@ const normalizeStrictConversationId = (value) => {
 };
 
 const getStrictConversationIdCandidates = () => {
+  // The committed route owns identity while React is still replacing old DOM.
+  const routeId = normalizeStrictConversationId(window.location.pathname.match(/\/c\/([^/?#]+)/)?.[1]);
+  if (routeId) return [routeId];
   const candidates = [];
   const seen = new Set();
   const addCandidate = (value) => {

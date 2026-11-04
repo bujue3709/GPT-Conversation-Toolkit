@@ -2,8 +2,7 @@
  * ChatGPT Conversation Toolkit - Search
  */
 
-const SEARCH_MARK_CLASS = "chatgpt-toolkit-search-text-match";
-const SEARCH_MARK_ACTIVE_CLASS = "chatgpt-toolkit-search-text-active";
+const SEARCH_HIGHLIGHT_NAME = "chatgpt-toolkit-search";
 const SEARCH_BATCH_SIZE = 80;
 
 let activeSearchToken = 0;
@@ -101,15 +100,7 @@ const createApiSearchMatch = (message, queryLower, resultIndex) => ({
 });
 
 const clearTextHighlights = () => {
-  const marks = document.querySelectorAll(`.${SEARCH_MARK_CLASS}`);
-  marks.forEach((mark) => {
-    const parent = mark.parentNode;
-    if (!parent) {
-      return;
-    }
-    parent.replaceChild(document.createTextNode(mark.textContent || ""), mark);
-    parent.normalize();
-  });
+  globalThis.CSS?.highlights?.delete(SEARCH_HIGHLIGHT_NAME);
 };
 
 const shouldSkipHighlightTextNode = (node) => {
@@ -120,10 +111,6 @@ const shouldSkipHighlightTextNode = (node) => {
 
   const tag = parent.tagName;
   if (tag === "SCRIPT" || tag === "STYLE" || tag === "TEXTAREA" || tag === "BUTTON") {
-    return true;
-  }
-
-  if (parent.classList?.contains(SEARCH_MARK_CLASS)) {
     return true;
   }
 
@@ -144,77 +131,23 @@ const shouldSkipHighlightTextNode = (node) => {
 };
 
 const injectTextHighlights = (containerNode, query) => {
-  if (!query || !(containerNode instanceof HTMLElement)) {
-    return;
-  }
-
+  if (!query || !(containerNode instanceof HTMLElement) ||
+      !globalThis.CSS?.highlights || typeof Highlight !== "function") return;
+  const highlight = CSS.highlights.get(SEARCH_HIGHLIGHT_NAME) || new Highlight();
   const walker = document.createTreeWalker(containerNode, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      return shouldSkipHighlightTextNode(node)
-        ? NodeFilter.FILTER_REJECT
-        : NodeFilter.FILTER_ACCEPT;
-    },
+    acceptNode: (node) => shouldSkipHighlightTextNode(node)
+      ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
   });
-
-  const textNodes = [];
-  let current;
-  while ((current = walker.nextNode())) {
-    textNodes.push(current);
-  }
-
-  const lowerQuery = query.toLowerCase();
-  const queryLength = query.length;
-
-  textNodes.forEach((textNode) => {
-    const text = textNode.textContent || "";
-    const lowerText = text.toLowerCase();
-    if (!lowerText.includes(lowerQuery)) {
-      return;
+  let node;
+  while ((node = walker.nextNode())) {
+    for (const match of getSearchMatchRanges(node.textContent, query.toLowerCase())) {
+      const range = document.createRange();
+      range.setStart(node, match.start);
+      range.setEnd(node, match.end);
+      highlight.add(range);
     }
-
-    const fragment = document.createDocumentFragment();
-    let lastIndex = 0;
-    let matchIndex = lowerText.indexOf(lowerQuery, lastIndex);
-
-    while (matchIndex !== -1) {
-      if (matchIndex > lastIndex) {
-        fragment.appendChild(document.createTextNode(text.slice(lastIndex, matchIndex)));
-      }
-
-      const mark = document.createElement("mark");
-      mark.className = SEARCH_MARK_CLASS;
-      mark.textContent = text.slice(matchIndex, matchIndex + queryLength);
-      fragment.appendChild(mark);
-
-      lastIndex = matchIndex + queryLength;
-      matchIndex = lowerText.indexOf(lowerQuery, lastIndex);
-    }
-
-    if (lastIndex < text.length) {
-      fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
-    }
-
-    textNode.parentNode?.replaceChild(fragment, textNode);
-  });
-};
-
-const updateActiveTextMark = () => {
-  document.querySelectorAll(`.${SEARCH_MARK_ACTIVE_CLASS}`).forEach((element) => {
-    element.classList.remove(SEARCH_MARK_ACTIVE_CLASS);
-  });
-
-  if (state.currentMatchIndex < 0 || state.currentMatchIndex >= state.searchMatches.length) {
-    return;
   }
-
-  const node = getSearchMatchNode(state.searchMatches[state.currentMatchIndex]);
-  if (!(node instanceof HTMLElement)) {
-    return;
-  }
-
-  node.querySelectorAll(`.${SEARCH_MARK_CLASS}`).forEach((mark) => {
-    mark.classList.add(SEARCH_MARK_ACTIVE_CLASS);
-  });
+  CSS.highlights.set(SEARCH_HIGHLIGHT_NAME, highlight);
 };
 
 const clearSearchHighlight = () => {
@@ -251,7 +184,6 @@ const highlightCurrentMatch = () => {
   }
 
   renderCurrentMatchTextHighlight();
-  updateActiveTextMark();
 };
 
 const getSearchSources = (mode) =>
@@ -351,6 +283,7 @@ const performSearch = async (query) => {
   const queryLower = state.searchQuery;
   let mode = "api";
   let sources = [];
+  let searchStaleIndexAt = 0;
   let apiSearchError = null;
 
   searchInProgress = true;
@@ -365,8 +298,12 @@ const performSearch = async (query) => {
       if (token !== activeSearchToken) {
         return;
       }
-      if (conversationIndex?.status === "ready" && Array.isArray(conversationIndex.messages)) {
+      const usableStatus = conversationIndex?.status === "ready" || conversationIndex?.status === "stale";
+      if (usableStatus && Array.isArray(conversationIndex.messages) && conversationIndex.messages.length > 0) {
         sources = conversationIndex.messages;
+        if (conversationIndex.status === "stale") {
+          searchStaleIndexAt = conversationIndex.updatedAt || conversationIndex.loadedAt || 0;
+        }
       }
     } catch (error) {
       apiSearchError = error;
@@ -383,6 +320,12 @@ const performSearch = async (query) => {
     if (apiSearchError) {
       updateStatusByKey("status.searchApiFallback", "warn");
     }
+  }
+
+  if (mode === "api" && searchStaleIndexAt) {
+    updateStatusByKey("status.searchApiStale", "warn", {
+      time: new Date(searchStaleIndexAt).toLocaleString(),
+    });
   }
 
   if (sources.length === 0) {
@@ -473,11 +416,9 @@ const scrollToCurrentMatch = async () => {
         match.node = resolvedNode;
         resolvedNode.classList.add("chatgpt-toolkit-search-highlight");
         renderCurrentMatchTextHighlight();
-        updateActiveTextMark();
         updateStatusByKey("status.searchJumpDone", "success");
 
-        const firstMark = resolvedNode.querySelector(`.${SEARCH_MARK_CLASS}`);
-        const scrollTarget = firstMark || resolvedNode;
+        const scrollTarget = resolvedNode;
         if (typeof scrollElementIntoConversationView === "function") {
           scrollElementIntoConversationView(scrollTarget, { behavior: "smooth", block: "center" });
         } else {
@@ -503,9 +444,7 @@ const scrollToCurrentMatch = async () => {
 
   node.classList.add("chatgpt-toolkit-search-highlight");
   renderCurrentMatchTextHighlight();
-  updateActiveTextMark();
-  const firstMark = node.querySelector(`.${SEARCH_MARK_CLASS}`);
-  const scrollTarget = firstMark || node;
+  const scrollTarget = node;
   if (typeof scrollElementIntoConversationView === "function") {
     scrollElementIntoConversationView(scrollTarget, { behavior: "smooth", block: "center" });
   } else {

@@ -24,13 +24,18 @@ const formatConversationExportMarkdown = (payload) => {
   if (payload?.title) {
     lines.push(`# ${payload.title}`, "");
   }
+  if (payload?.completeness === "partial") {
+    lines.push(`> ${t("export.partialNotice")}`, "");
+  }
   (payload?.messages || []).forEach((message) => {
     const role = message.role ? message.role[0].toUpperCase() + message.role.slice(1) : "Message";
     const text = payload.includeImages && message.images?.length
       ? formatExportMessageWithImages(message)
-      : payload?.source === "api" && typeof message.__markdown === "string"
-        ? message.__markdown
-        : message.text || "";
+      : typeof message.markdown === "string" && message.markdown
+        ? message.markdown
+        : typeof message.__markdown === "string" && message.__markdown
+          ? message.__markdown
+          : message.text || "";
     lines.push(`## ${role}`, "");
     if (text) {
       lines.push(text, "");
@@ -39,8 +44,8 @@ const formatConversationExportMarkdown = (payload) => {
   return lines.join("\n").trimEnd() + "\n";
 };
 
-const formatConversationExportText = (payload) =>
-  (payload?.messages || [])
+const formatConversationExportText = (payload) => {
+  const body = (payload?.messages || [])
     .map((message) => {
       const role = message.role || "message";
       const text = payload.includeImages && message.images?.length
@@ -50,3 +55,8 @@ const formatConversationExportText = (payload) =>
     })
     .filter(Boolean)
     .join("\n\n");
+  if (payload?.completeness !== "partial") {
+    return body;
+  }
+  return [t("export.partialNotice"), "", body].join("\n");
+};

@@ -2,6 +2,9 @@
 const EXPORT_MEMORY_ARCHIVE_LIMIT = 64 * 1024 * 1024;
 const EXPORT_PREVIEW_STORE_LIMIT = 32 * 1024 * 1024;
 const EXPORT_ZIP_LIMIT = 2 * 1024 * 1024 * 1024;
+// How many images may download at the same time. The ZIP writer stays serial;
+// only the network fetches overlap.
+const EXPORT_IMAGE_CONCURRENCY = 2;
 
 const createExportArchiveSink = async (filename) => {
   // Use the browser download manager, preserving its directory and download history.
@@ -154,64 +157,93 @@ const exportConversationImageArchive = async (payload, options = {}) => {
   let store;
   const assets = new Map();
   const images = payload.messages.flatMap((message) => message.images || []);
-  const total = new Set(images.map(image => image.source)).size;
+  // Downloads used to run one by one, so a 40-turn conversation with a dozen
+  // images spent most of its time waiting on the network. Fetches now run in
+  // small parallel batches; the ZIP writer still receives them strictly in
+  // order, so the archive layout stays deterministic.
+  const imageGroups = new Map();
+  for (const image of images) {
+    if (!imageGroups.has(image.source)) imageGroups.set(image.source, []);
+    imageGroups.get(image.source).push(image);
+  }
+  const uniqueImages = [...imageGroups.keys()].map((source) => imageGroups.get(source)[0]);
+  const total = uniqueImages.length;
   const startedAt = Date.now();
   let blocked = null;
+  let completed = 0;
+  const assignToGroup = (source, value) => {
+    for (const image of imageGroups.get(source) || []) Object.assign(image, value);
+  };
+  const markFailed = (source, error) => {
+    const failed = {
+      status: "failed",
+      error: error.name === "AbortError" ? "Image download timed out" : error.message,
+    };
+    assets.set(source, failed);
+    assignToGroup(source, failed);
+  };
   try {
     if (options.format === "png") store = await createExportPreviewStore();
-    for (let index = 0; index < images.length; index++) {
-      const image = images[index];
+    updateStatusByKey("exportImages.progress", "info", { current: 0, total });
+    options.onProgress?.({ completed: 0, total, startedAt });
+    for (let offset = 0; offset < uniqueImages.length; offset += EXPORT_IMAGE_CONCURRENCY) {
       throwIfExportAborted(signal);
-      updateStatusByKey("exportImages.progress", "info", {
-        current: index + 1,
-        total: images.length,
-      });
-      const previous = assets.get(image.source);
-      if (previous) {
-        Object.assign(image, previous);
-        continue;
-      }
-      options.onProgress?.({ completed: assets.size, total, startedAt });
-      let blob;
-      try {
-        if (blocked) throw blocked;
-        blob = await fetchExportImage(image, payload, signal);
-      } catch (error) {
-        throwIfExportAborted(signal);
-        if (error.stopImageRequests) blocked = error;
-        const failed = {
-          status: "failed",
-          error:
-            error.name === "AbortError"
-              ? "Image download timed out"
-              : error.message,
-        };
-        assets.set(image.source, failed);
-        Object.assign(image, failed);
-        continue;
-      }
-      const path = `images/image-${String(assets.size + 1).padStart(4, "0")}.${getExportImageExtension(blob.type)}`;
-      // ZIP/sink failures are fatal, never misreported as a missing image.
-      await zip.add(path, blob);
-      const saved = {
-        status: "saved",
-        path,
-        mimeType: blob.type,
-        size: blob.size,
-      };
-      if (store) {
-        const dimensions = await getExportImageDimensions(blob);
-        if (dimensions) {
+      if (blocked) break;
+      const chunk = uniqueImages.slice(offset, offset + EXPORT_IMAGE_CONCURRENCY);
+      const fetched = await Promise.all(
+        chunk.map(async (image) => {
           try {
-            await store.put(path.slice("images/".length), blob);
-            Object.assign(saved, dimensions, { preview: "available" });
-          } catch {
-            saved.preview = "storage-unavailable";
+            if (blocked) return { image, error: blocked };
+            return { image, blob: await fetchExportImage(image, payload, signal) };
+          } catch (error) {
+            if (error.stopImageRequests) blocked = error;
+            return { image, error };
           }
-        } else saved.preview = "unsupported-or-too-large";
+        }),
+      );
+      for (const result of fetched) {
+        throwIfExportAborted(signal);
+        const { image } = result;
+        if (result.error) {
+          if (result.error.stopImageRequests) blocked = result.error;
+          markFailed(image.source, result.error);
+        } else {
+          const blob = result.blob;
+          const path = `images/image-${String(assets.size + 1).padStart(4, "0")}.${getExportImageExtension(blob.type)}`;
+          // ZIP/sink failures are fatal, never misreported as a missing image.
+          await zip.add(path, blob);
+          const saved = {
+            status: "saved",
+            path,
+            mimeType: blob.type,
+            size: blob.size,
+          };
+          if (store) {
+            const dimensions = await getExportImageDimensions(blob);
+            if (dimensions) {
+              try {
+                await store.put(path.slice("images/".length), blob);
+                Object.assign(saved, dimensions, { preview: "available" });
+              } catch {
+                saved.preview = "storage-unavailable";
+              }
+            } else saved.preview = "unsupported-or-too-large";
+          }
+          assets.set(image.source, saved);
+          assignToGroup(image.source, saved);
+        }
+        completed += 1;
+        updateStatusByKey("exportImages.progress", "info", { current: completed, total });
+        options.onProgress?.({ completed, total, startedAt });
       }
-      assets.set(image.source, saved);
-      Object.assign(image, saved);
+    }
+    // Once the server refuses images, the rest fail fast instead of hammering it.
+    for (const image of uniqueImages) {
+      if (assets.has(image.source)) continue;
+      markFailed(image.source, blocked || new Error("Image download skipped"));
+      completed += 1;
+      updateStatusByKey("exportImages.progress", "info", { current: completed, total });
+      options.onProgress?.({ completed, total, startedAt });
     }
     options.onProgress?.(null);
     if (options.format === "png") {
@@ -247,7 +279,10 @@ const exportConversationImageArchive = async (payload, options = {}) => {
       failedImageCount: failed.length,
       previewUnavailableCount: previewUnavailable,
       completeness:
-        failed.length || previewUnavailable ? "partial" : "complete",
+        payload.completeness === "partial" || failed.length || previewUnavailable
+          ? "partial"
+          : "complete",
+      source: payload.source || "conversation-api",
       images: payload.messages.flatMap((message) =>
         (message.images || []).map((image) => ({
           messageIndex: message.index,

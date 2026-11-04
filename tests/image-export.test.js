@@ -49,6 +49,44 @@ function setup(extra = {}) {
   return { ctx, run: (code) => vm.runInContext(code, ctx) };
 }
 
+test("index storage roundtrip retains image sources privately and preserves interleaved export content", async () => {
+  let stored;
+  const { ctx, run } = setup({
+    conversationIndexState: { messages: [], version: 0 },
+    timelineState: { visible: false },
+    getStrictConversationIdCandidates: () => ["conversation-1"],
+    getExtensionStorageArea: () => ({ get: (_, callback) => callback({ conversationIndexCache: stored }) }),
+  });
+  ctx.window.addEventListener = () => {};
+  vm.runInContext(source("features/conversation-index.js"), ctx);
+  ctx.data = {
+    conversation_id: "conversation-1", current_node: "a", mapping: { a: {
+      id: "a", parent: null, message: {
+        id: "a", author: { role: "assistant", name: "assistant-name" }, channel: "final", end_turn: true,
+        content: { parts: ["before ![first](sediment://file-one) middle", { content_type: "image_asset_pointer", asset_pointer: "file-service://file-two" }, "after"] },
+      },
+    } },
+  };
+  stored = JSON.parse(run("JSON.stringify({schema:2,byId:{'conversation-1':buildConversationIndexCacheEntry(buildConversationIndexFromApiResponse(data)).entry}})"));
+  assert.equal(stored.byId["conversation-1"].messages[0].images[0].source, "sediment://file-one");
+  await run("restoreConversationIndexFromCache('conversation-1')");
+  assert.equal(run("conversationIndexState.messages[0].images[1].source"), "file-service://file-two");
+  assert.equal(run("Object.keys(conversationIndexState.messages[0].images[0]).includes('source')"), false);
+  assert.equal(run("conversationIndexState.messages[0].authorName"), "assistant-name");
+  assert.equal(run("conversationIndexState.messages[0].channel"), "final");
+  assert.equal(run("conversationIndexState.messages[0].endTurn"), true);
+  const output = run(`(() => {
+    const payload = buildConversationExportPayloadFromIndex(conversationIndexState);
+    payload.includeImages = true;
+    payload.messages[0].images.forEach((image, i) => { image.path = 'images/image-' + i + '.png'; });
+    return { md: formatConversationExportMarkdown(payload), json: formatConversationExportJson(payload) };
+  })()`);
+  assert.match(output.md, /before[\s\S]*images\/image-0.png[\s\S]*middle[\s\S]*images\/image-1.png[\s\S]*after/);
+  assert(!output.md.includes("sediment://"));
+  assert(!output.json.includes("sediment://"));
+  assert(!output.json.includes("file-service://"));
+});
+
 test("uploaded, generated and image-only tool messages survive active-branch export", () => {
   const { run, ctx } = setup();
   ctx.data = {
@@ -355,7 +393,7 @@ test("image resolver uses same-origin auth and does not send bearer tokens to im
   assert.equal(calls[1].options.credentials, "omit");
 });
 
-test("conversation access denial stops alternate endpoints and retries", async () => {
+test("conversation variants are bounded while rate limiting stops immediately", async () => {
   for (const status of [401, 403, 429]) {
     let requests = 0;
     const ctx = vm.createContext({ URL, AbortController, setTimeout, clearTimeout,
@@ -367,8 +405,8 @@ test("conversation access denial stops alternate endpoints and retries", async (
       }
     });
     vm.runInContext(source('features/conversation-api.js'), ctx);
-    await assert.rejects(vm.runInContext("fetchConversationById('fixture')",ctx), error => error.code === 'ACCESS_BLOCKED' && error.fallbackAllowed === false);
-    assert.equal(requests, 1);
+    await assert.rejects(vm.runInContext("fetchConversationById('fixture')",ctx), error => status === 429 ? error.code === 'RATE_LIMITED' : error.details?.endpointRefused === true);
+    assert.equal(requests, status === 429 ? 1 : 2);
   }
 });
 
@@ -380,13 +418,13 @@ test("blocked image access stops later requests but preserves selected text in p
     updateStatusByKey: () => {},
     downloadExportFile: value => { download = value.content; },
   });
-  await run(`exportConversationImageArchive({includeImages:true,messages:[{index:1,role:'assistant',text:'Keep this text',images:[makeExportImage('https://example.test/a.png'),makeExportImage('https://example.test/b.png')]}]}, {format:'md'})`);
-  assert.equal(requests, 1);
+  await run(`exportConversationImageArchive({includeImages:true,messages:[{index:1,role:'assistant',text:'Keep this text',images:[makeExportImage('https://example.test/a.png'),makeExportImage('https://example.test/b.png'),makeExportImage('https://example.test/c.png'),makeExportImage('https://example.test/d.png')]}]}, {format:'md'})`);
+  assert.equal(requests, 2, "only the already-started bounded batch may reach the server");
   const files = fflate.unzipSync(new Uint8Array(await download.arrayBuffer()));
   assert(files['conversation.md']);
   assert(!files['conversation.json']);
   assert.match(new TextDecoder().decode(files['conversation.md']), /Keep this text/);
-  assert.equal(JSON.parse(new TextDecoder().decode(files['manifest.json'])).failedImageCount, 2);
+  assert.equal(JSON.parse(new TextDecoder().decode(files['manifest.json'])).failedImageCount, 4);
 });
 
 test("explicit Cloudflare challenge stops image access without reading HTML", () => {

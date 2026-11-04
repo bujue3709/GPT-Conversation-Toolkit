@@ -210,17 +210,17 @@ const buildToolbar = () => {
   container.id = TOOLKIT_ID;
   container.innerHTML = `
     <div class="chatgpt-toolkit-header">
-      <strong class="chatgpt-toolkit-title">${t("toolbar.title")}</strong>
-      <button type="button" class="chatgpt-toolkit-minimize" data-action="minimize" aria-label="${t("toolbar.minimizeAria")}">
-        ${t("toolbar.minimize")}
+      <strong class="chatgpt-toolkit-title">${tHtml("toolbar.title")}</strong>
+      <button type="button" class="chatgpt-toolkit-minimize" data-action="minimize" aria-label="${tHtml("toolbar.minimizeAria")}">
+        ${tHtml("toolbar.minimize")}
       </button>
       <div class="chatgpt-toolkit-header-meta">
         <div class="chatgpt-toolkit-context">
-          <span class="chatgpt-toolkit-subtitle">${t("toolbar.subtitle")}</span>
+          <span class="chatgpt-toolkit-subtitle">${tHtml("toolbar.subtitle")}</span>
         </div>
         <label class="chatgpt-toolkit-language" for="chatgpt-toolkit-language-select">
-          <span class="chatgpt-toolkit-language-label">${t("language.label")}</span>
-          <select id="chatgpt-toolkit-language-select" class="chatgpt-toolkit-language-select" aria-label="${t("language.label")}">
+          <span class="chatgpt-toolkit-language-label">${tHtml("language.label")}</span>
+          <select id="chatgpt-toolkit-language-select" class="chatgpt-toolkit-language-select" aria-label="${tHtml("language.label")}">
             ${getToolbarLanguageOptionsMarkup()}
           </select>
         </label>
@@ -228,37 +228,37 @@ const buildToolbar = () => {
     </div>
     <div class="chatgpt-toolkit-actions">
       <button type="button" class="chatgpt-toolkit-button primary" data-action="export">
-        ${t("toolbar.export")}
+        ${tHtml("toolbar.export")}
       </button>
       <button type="button" class="chatgpt-toolkit-button" data-action="prompt-library">
-        ${t("toolbar.promptLibrary")}
+        ${tHtml("toolbar.promptLibrary")}
       </button>
       <button type="button" class="chatgpt-toolkit-button" data-action="timeline-toggle">
         ${timelineState.visible ? t("toolbar.timelineHide") : t("toolbar.timelineShow")}
       </button>
       <button type="button" class="chatgpt-toolkit-button" data-action="settings">
-        ${t("toolbar.settings")}
+        ${tHtml("toolbar.settings")}
       </button>
     </div>
     <div class="chatgpt-toolkit-search">
       <div class="chatgpt-toolkit-search-row">
-        <input type="text" id="chatgpt-toolkit-search-input" class="chatgpt-toolkit-search-input" placeholder="${t("toolbar.searchPlaceholder")}" />
-        <button type="button" class="chatgpt-toolkit-search-btn" data-action="search" title="${t("toolbar.searchTitle")}">${t("toolbar.search")}</button>
+        <input type="text" id="chatgpt-toolkit-search-input" class="chatgpt-toolkit-search-input" placeholder="${tHtml("toolbar.searchPlaceholder")}" />
+        <button type="button" class="chatgpt-toolkit-search-btn" data-action="search" title="${tHtml("toolbar.searchTitle")}">${tHtml("toolbar.search")}</button>
       </div>
       <div class="chatgpt-toolkit-search-nav">
-        <button type="button" id="chatgpt-toolkit-search-prev" class="chatgpt-toolkit-nav-btn" data-action="search-prev" disabled title="${t("toolbar.searchPrevTitle")}">${t("toolbar.searchPrev")}</button>
+        <button type="button" id="chatgpt-toolkit-search-prev" class="chatgpt-toolkit-nav-btn" data-action="search-prev" disabled title="${tHtml("toolbar.searchPrevTitle")}">${tHtml("toolbar.searchPrev")}</button>
         <span id="chatgpt-toolkit-search-result" class="chatgpt-toolkit-search-result"></span>
-        <button type="button" id="chatgpt-toolkit-search-next" class="chatgpt-toolkit-nav-btn" data-action="search-next" disabled title="${t("toolbar.searchNextTitle")}">${t("toolbar.searchNext")}</button>
+        <button type="button" id="chatgpt-toolkit-search-next" class="chatgpt-toolkit-nav-btn" data-action="search-next" disabled title="${tHtml("toolbar.searchNextTitle")}">${tHtml("toolbar.searchNext")}</button>
       </div>
     </div>
-    <p id="${STATUS_ID}" class="chatgpt-toolkit-status" data-tone="info">${t("toolbar.ready")}</p>
+    <p id="${STATUS_ID}" class="chatgpt-toolkit-status" data-tone="info">${tHtml("toolbar.ready")}</p>
     <div class="chatgpt-toolkit-cta-row" aria-label="Project actions">
-      <button type="button" class="chatgpt-toolkit-cta-btn is-accent" data-action="open-star-project" title="${t("toolbar.starProjectAria")}" aria-label="${t("toolbar.starProjectAria")}">
+      <button type="button" class="chatgpt-toolkit-cta-btn is-accent" data-action="open-star-project" title="${tHtml("toolbar.starProjectAria")}" aria-label="${tHtml("toolbar.starProjectAria")}">
         <span class="chatgpt-toolkit-cta-viewport">
           ${buildToolbarTickerMarkup(t("toolbar.starProject"))}
         </span>
       </button>
-      <button type="button" class="chatgpt-toolkit-cta-btn" data-action="open-feedback" title="${t("toolbar.feedbackAria")}" aria-label="${t("toolbar.feedbackAria")}">
+      <button type="button" class="chatgpt-toolkit-cta-btn" data-action="open-feedback" title="${tHtml("toolbar.feedbackAria")}" aria-label="${tHtml("toolbar.feedbackAria")}">
         <span class="chatgpt-toolkit-cta-viewport">
           ${buildToolbarTickerMarkup(t("toolbar.feedback"))}
         </span>
@@ -660,68 +660,68 @@ const renderSettingsModal = (modal, draftConfig = null) => {
   const config = getSettingsConfig(draftConfig);
   modal.innerHTML = `
     <div class="chatgpt-toolkit-prompt-backdrop" data-settings-action="close"></div>
-    <div class="chatgpt-toolkit-prompt-panel" role="dialog" aria-modal="true" aria-label="${t("settings.title")}" style="max-width: 480px;">
+    <div class="chatgpt-toolkit-prompt-panel" role="dialog" aria-modal="true" aria-label="${tHtml("settings.title")}" style="max-width: 480px;">
       <div class="chatgpt-toolkit-prompt-header">
-        <strong>${t("settings.title")}</strong>
-        <button type="button" class="chatgpt-toolkit-prompt-close" data-settings-action="close">${t("settings.close")}</button>
+        <strong>${tHtml("settings.title")}</strong>
+        <button type="button" class="chatgpt-toolkit-prompt-close" data-settings-action="close">${tHtml("settings.close")}</button>
       </div>
       <div class="chatgpt-toolkit-prompt-list" style="padding: 16px; padding-bottom: 24px; overflow-y: auto;">
         <div class="chatgpt-toolkit-form-group">
-          <label class="chatgpt-toolkit-form-label" for="${SETTINGS_INPUT_IDS.exportFormat}">${t("settings.exportFormat.label")}</label>
+          <label class="chatgpt-toolkit-form-label" for="${SETTINGS_INPUT_IDS.exportFormat}">${tHtml("settings.exportFormat.label")}</label>
           <select id="${SETTINGS_INPUT_IDS.exportFormat}" class="chatgpt-toolkit-input">
             <option value="${TOOLKIT_EXPORT_FORMAT_JSON}"${config.exportFormat === TOOLKIT_EXPORT_FORMAT_JSON ? " selected" : ""}>
-              ${t("settings.exportFormat.json")}
+              ${tHtml("settings.exportFormat.json")}
             </option>
             <option value="${TOOLKIT_EXPORT_FORMAT_TEXT}"${config.exportFormat === TOOLKIT_EXPORT_FORMAT_TEXT ? " selected" : ""}>
-              ${t("settings.exportFormat.txt")}
+              ${tHtml("settings.exportFormat.txt")}
             </option>
             <option value="${TOOLKIT_EXPORT_FORMAT_MARKDOWN}"${config.exportFormat === TOOLKIT_EXPORT_FORMAT_MARKDOWN ? " selected" : ""}>
-              ${t("settings.exportFormat.md")}
+              ${tHtml("settings.exportFormat.md")}
             </option>
             <option value="${TOOLKIT_EXPORT_FORMAT_PNG}"${config.exportFormat === TOOLKIT_EXPORT_FORMAT_PNG ? " selected" : ""}>
-              ${t("settings.exportFormat.png")}
+              ${tHtml("settings.exportFormat.png")}
             </option>
           </select>
-          <p class="chatgpt-toolkit-form-desc">${t("settings.exportFormat.desc")}</p>
+          <p class="chatgpt-toolkit-form-desc">${tHtml("settings.exportFormat.desc")}</p>
         </div>
         <div class="chatgpt-toolkit-form-group">
-          <label class="chatgpt-toolkit-form-label" for="${SETTINGS_INPUT_IDS.exportRole}">${t("settings.exportRole.label")}</label>
+          <label class="chatgpt-toolkit-form-label" for="${SETTINGS_INPUT_IDS.exportRole}">${tHtml("settings.exportRole.label")}</label>
           <select id="${SETTINGS_INPUT_IDS.exportRole}" class="chatgpt-toolkit-input">
             <option value="${TOOLKIT_EXPORT_ROLE_ALL}"${config.exportRole === TOOLKIT_EXPORT_ROLE_ALL ? " selected" : ""}>
-              ${t("settings.exportRole.all")}
+              ${tHtml("settings.exportRole.all")}
             </option>
             <option value="${TOOLKIT_EXPORT_ROLE_ASSISTANT}"${config.exportRole === TOOLKIT_EXPORT_ROLE_ASSISTANT ? " selected" : ""}>
-              ${t("settings.exportRole.assistant")}
+              ${tHtml("settings.exportRole.assistant")}
             </option>
           </select>
-          <p class="chatgpt-toolkit-form-desc">${t("settings.exportRole.desc")}</p>
+          <p class="chatgpt-toolkit-form-desc">${tHtml("settings.exportRole.desc")}</p>
         </div>
         <div class="chatgpt-toolkit-form-group">
-          <label class="chatgpt-toolkit-form-label" for="${SETTINGS_INPUT_IDS.latexCopyFormat}">${t("settings.latexCopyFormat.label")}</label>
+          <label class="chatgpt-toolkit-form-label" for="${SETTINGS_INPUT_IDS.latexCopyFormat}">${tHtml("settings.latexCopyFormat.label")}</label>
           <select id="${SETTINGS_INPUT_IDS.latexCopyFormat}" class="chatgpt-toolkit-input">
             <option value="${TOOLKIT_LATEX_COPY_FORMAT_RAW}"${config.latexCopyFormat === TOOLKIT_LATEX_COPY_FORMAT_RAW ? " selected" : ""}>
-              ${t("settings.latexCopyFormat.raw")}
+              ${tHtml("settings.latexCopyFormat.raw")}
             </option>
             <option value="${TOOLKIT_LATEX_COPY_FORMAT_MARKDOWN_INLINE}"${config.latexCopyFormat === TOOLKIT_LATEX_COPY_FORMAT_MARKDOWN_INLINE ? " selected" : ""}>
-              ${t("settings.latexCopyFormat.markdownInline")}
+              ${tHtml("settings.latexCopyFormat.markdownInline")}
             </option>
             <option value="${TOOLKIT_LATEX_COPY_FORMAT_MARKDOWN_BLOCK}"${config.latexCopyFormat === TOOLKIT_LATEX_COPY_FORMAT_MARKDOWN_BLOCK ? " selected" : ""}>
-              ${t("settings.latexCopyFormat.markdownBlock")}
+              ${tHtml("settings.latexCopyFormat.markdownBlock")}
             </option>
             <option value="${TOOLKIT_LATEX_COPY_FORMAT_LATEX_INLINE}"${config.latexCopyFormat === TOOLKIT_LATEX_COPY_FORMAT_LATEX_INLINE ? " selected" : ""}>
-              ${t("settings.latexCopyFormat.latexInline")}
+              ${tHtml("settings.latexCopyFormat.latexInline")}
             </option>
             <option value="${TOOLKIT_LATEX_COPY_FORMAT_LATEX_DISPLAY}"${config.latexCopyFormat === TOOLKIT_LATEX_COPY_FORMAT_LATEX_DISPLAY ? " selected" : ""}>
-              ${t("settings.latexCopyFormat.latexDisplay")}
+              ${tHtml("settings.latexCopyFormat.latexDisplay")}
             </option>
           </select>
-          <p class="chatgpt-toolkit-form-desc">${t("settings.latexCopyFormat.desc")}</p>
+          <p class="chatgpt-toolkit-form-desc">${tHtml("settings.latexCopyFormat.desc")}</p>
         </div>
       </div>
       <div class="chatgpt-toolkit-prompt-footer">
         <span></span>
         <div class="chatgpt-toolkit-prompt-footer-actions">
-          <button type="button" class="chatgpt-toolkit-settings-save">${t("settings.save")}</button>
+          <button type="button" class="chatgpt-toolkit-settings-save">${tHtml("settings.save")}</button>
         </div>
       </div>
     </div>

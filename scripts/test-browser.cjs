@@ -213,6 +213,47 @@ const conversation = {
     assert.equal(reading.clones, 0);
     assert(reading.unchanged);
     assert.deepEqual(reading.texts, ["beforeafter", "keep", "keep", "svgkeep"]);
+    // Exercise both real cross-world message bridges, including origin checks.
+    await page.evaluate(async () => {
+      await (await fetch("/backend-api/conversation/synthetic-fixture")).json();
+    });
+    const bridgeRegression = await extension(async () => {
+      let captured;
+      for (let i = 0; i < 30; i++) {
+        captured = getCapturedConversationApiResponse(["synthetic-fixture"]);
+        if (captured) break;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      const virtualizer = await requestVirtualizerScrollToIndex([0]);
+      return { captured: captured?.conversationId || "", virtualizer: virtualizer.reason };
+    });
+    assert.equal(bridgeRegression.captured, "synthetic-fixture");
+    assert.equal(bridgeRegression.virtualizer, "virtualizer_api_not_found");
+    // Native Range highlights must not replace text nodes owned by React.
+    const highlightRegression = await extension(() => {
+      const container = document.querySelector("article .markdown p");
+      const original = container.firstChild;
+      const before = container.innerHTML;
+      const mutations = new MutationObserver(() => {});
+      mutations.observe(container, { subtree: true, childList: true, characterData: true });
+      clearTextHighlights();
+      injectTextHighlights(container, "fixture");
+      const ranges = CSS.highlights.get(SEARCH_HIGHLIGHT_NAME)?.size || 0;
+      const unchanged = container.innerHTML === before && container.firstChild === original;
+      const records = mutations.takeRecords().length;
+      mutations.disconnect();
+      // Simulate React's next streamed update against its original node.
+      container.removeChild(original);
+      container.appendChild(original);
+      original.textContent += " streamed update";
+      clearTextHighlights();
+      injectTextHighlights(container, "streamed");
+      const refreshed = CSS.highlights.get(SEARCH_HIGHLIGHT_NAME)?.size || 0;
+      original.textContent = original.textContent.replace(" streamed update", "");
+      clearTextHighlights();
+      return { ranges, unchanged, records, refreshed };
+    });
+    assert.deepEqual(highlightRegression, { ranges: 1, unchanged: true, records: 0, refreshed: 1 });
     await page.locator('[data-action="export"]').click();
     await page.locator("[data-export-selection-export-button]").waitFor();
     await page.locator(".chatgpt-toolkit-export-panel").screenshot({ path: path.join(output, "export-dialog.png") });
@@ -539,11 +580,68 @@ const conversation = {
       heapAfter - heapBefore < 8 * 1024 * 1024,
       "Repeated exports must not retain job buffers",
     );
+    // Text-only multi-page PNG must appear as one ZIP in the download manager.
+    const pngPackagePromise = page.waitForEvent("download");
+    pngPackagePromise.catch(() => {});
+    await extension(async () => {
+      await exportConversationPng({ title: "Long PNG", messages: [{ role: "assistant", text: "```text\n" + "line of text\n".repeat(1400) + "```" }] });
+    });
+    const pngPackage = await pngPackagePromise;
+    assert(pngPackage.suggestedFilename().endsWith(".zip"));
+    const pngPackagePath = path.join(output, "text-only-pages.zip");
+    await pngPackage.saveAs(pngPackagePath);
+    const pngPages = fflate.unzipSync(fs.readFileSync(pngPackagePath));
+    assert(Object.keys(pngPages).length > 1);
+    assert(Object.keys(pngPages).every((name) => name.endsWith(".png")));
+
+    // Invoke history in MAIN, then replace <main> after the route commits.
+    await page.locator('[data-action="export"]').click();
+    await page.locator("[data-export-selection-export-button]").waitFor();
+    await extension(() => {
+      window.__reviewRouteEvents = 0;
+      window.__reviewRootRebound = false;
+      window.addEventListener("__chatgptConversationToolkitRouteChange", () => { window.__reviewRouteEvents++; });
+      const observer = new MutationObserver(() => {});
+      const original = MutationObserver.prototype.observe;
+      MutationObserver.prototype.observe = function (target, options) {
+        if (target?.id === "review-replaced-main") window.__reviewRootRebound = true;
+        return original.call(this, target, options);
+      };
+      window.__reviewRestoreObserver = () => { MutationObserver.prototype.observe = original; observer.disconnect(); };
+    });
+    await page.evaluate(() => {
+      history.pushState({}, "", "/c/route-fixture");
+      setTimeout(() => {
+        const main = document.querySelector("main");
+        const next = main.cloneNode(true);
+        next.id = "review-replaced-main";
+        next.dataset.conversationId = "stale-project-id";
+        main.replaceWith(next);
+      }, 80);
+    });
+    await page.waitForFunction(() => !document.querySelector("#chatgpt-toolkit-export-selection-modal")?.classList.contains("is-visible"));
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    const routeRegression = await extension(() => ({
+      events: window.__reviewRouteEvents,
+      rebound: window.__reviewRootRebound,
+      candidates: getStrictConversationIdCandidates(),
+      closed: !exportSelectionState.isOpen,
+    }));
+    assert(routeRegression.events > 0);
+    assert.equal(routeRegression.rebound, true);
+    assert.deepEqual(routeRegression.candidates, ["route-fixture"]);
+    assert.equal(routeRegression.closed, true);
+    await page.evaluate(() => history.replaceState({}, "", "/c/synthetic-fixture"));
+    await extension(() => window.__reviewRestoreObserver());
     assert.equal(errors.length, 0, errors.join("\n"));
     const result = {
       browser: context.browser().version(),
       realExtensionLoaded: true,
       textReader: reading,
+      highlightRegression,
+      bridgeRegression,
+      routeRegression,
+      textOnlyPngPages: Object.keys(pngPages).length,
       imageCount: manifest.imageCount,
       uniqueImages: manifest.uniqueImageCount,
       pngRedPixels: redPixels,
