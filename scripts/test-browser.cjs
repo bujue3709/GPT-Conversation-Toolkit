@@ -633,6 +633,123 @@ const conversation = {
     assert.equal(routeRegression.closed, true);
     await page.evaluate(() => history.replaceState({}, "", "/c/synthetic-fixture"));
     await extension(() => window.__reviewRestoreObserver());
+
+    // First screen contains only 3 of 47 questions. Exercise actual MAIN capture,
+    // API fallback and the timeline together, with the older page held in flight.
+    const historyMessages = Array.from({ length: 94 }, (_, i) => ({
+      id: `history-${i + 1}`,
+      author: { role: i % 2 === 0 ? "user" : "assistant" },
+      content: { parts: [`history message ${i + 1}`] },
+    }));
+    const fragment = {
+      conversation_id: "long-history-fixture", current_node: "history-94",
+      pageInfo: { hasPreviousPage: true, startCursor: "history-older" },
+      mapping: Object.fromEntries(historyMessages.slice(-6).map((message, i, tail) => [message.id, {
+        id: message.id, parent: tail[i - 1]?.id || null, message,
+      }])),
+    };
+    let releaseHistory, historyStarted, historyRequests = 0, failHistory = false;
+    const olderStarted = new Promise((resolve) => { historyStarted = resolve; });
+    const olderHeld = new Promise((resolve) => { releaseHistory = resolve; });
+    await page.route("https://chatgpt.com/backend-api/**", async (route) => {
+      const url = new URL(route.request().url());
+      if (!url.pathname.includes("long-history-fixture")) return route.fallback();
+      historyRequests++;
+      if (failHistory) return route.fulfill({ status: 403, json: { error: "fixture access denied" } });
+      if (url.pathname === "/backend-api/conversation/long-history-fixture") return route.fulfill({ json: fragment });
+      if (url.pathname.endsWith("/messages")) {
+        assert.equal(url.searchParams.get("before"), "history-older");
+        historyStarted();
+        await olderHeld;
+        return route.fulfill({ json: { messages: historyMessages.slice(0, -6), pageInfo: { hasPreviousPage: false } } });
+      }
+      return route.fulfill({ json: { messages: historyMessages.slice(-6), pageInfo: fragment.pageInfo } });
+    });
+    await page.evaluate(async () => {
+      await fetch("/backend-api/conversation/long-history-fixture");
+    });
+    // Wait for the real postMessage capture to reach the isolated cache.
+    await assert.doesNotReject(async () => {
+      const deadline = Date.now() + 5000;
+      while (!await extension(() => Boolean(getCapturedConversationApiResponse(["long-history-fixture"])))) {
+        if (Date.now() > deadline) throw new Error("Long-history capture did not arrive");
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    });
+    await page.evaluate(() => {
+      history.pushState({}, "", "/c/long-history-fixture");
+      document.querySelector("main").innerHTML = [89, 91, 93].map((id) =>
+        `<article data-message-id="history-${id}" data-message-author-role="user"><p>history message ${id}</p></article>`).join("");
+    });
+    await extension(() => setTimelineVisibility(true, { persist: false }));
+    await Promise.race([olderStarted, new Promise((_, reject) => setTimeout(() => reject(new Error("Full-history pagination never started")), 10000))]);
+    const initialHistory = await extension(() => {
+      const captured = getCapturedConversationApiResponse(["long-history-fixture"]);
+      mergeIndexFromCapturedResponse(captured);
+      getTimelineSourceNodes();
+      updateTimelineCount(3, 3);
+      return {
+        pending: timelineState.countPending,
+        text: getTimelineElements().count.textContent,
+        inFlight: isConversationIndexRefreshing(),
+      };
+    });
+    assert.equal(initialHistory.pending, true);
+    assert.equal(initialHistory.inFlight, true);
+    assert(!initialHistory.text.includes("3/3"));
+    releaseHistory();
+    const longHistoryRegression = await extension(async () => {
+      await loadConversationIndex();
+      const sources = getTimelineSourceNodes();
+      updateTimelineCount(47, sources.length);
+      const complete = conversationIndexState.completeness.complete;
+      // A late page fragment cannot undo the finished full-history read.
+      mergeIndexFromCapturedResponse(getCapturedConversationApiResponse(["long-history-fixture"]));
+      return {
+        firstScreen: 3, turns: getTimelineSourceNodes().length,
+        firstId: sources[0].messageId, lastId: sources.at(-1).messageId,
+        complete, pending: timelineState.countPending,
+        text: getTimelineElements().count.textContent,
+      };
+    });
+    assert.equal(longHistoryRegression.turns, 47);
+    assert.equal(longHistoryRegression.firstId, "history-1");
+    assert.equal(longHistoryRegression.lastId, "history-93");
+    assert.equal(longHistoryRegression.complete, true);
+    assert.equal(longHistoryRegression.pending, false);
+    assert.equal(longHistoryRegression.text, "47/47");
+    const completedRequests = historyRequests;
+    await extension(async () => { for (let i = 0; i < 10; i++) await loadConversationIndex(); });
+    assert.equal(historyRequests, completedRequests, "Settled history must not poll the server");
+    longHistoryRegression.requests = historyRequests;
+    failHistory = true;
+    const failedHistory = await extension(async () => {
+      invalidateConversationIndex();
+      mergeIndexFromCapturedResponse(getCapturedConversationApiResponse(["long-history-fixture"]));
+      let failed = false;
+      try { await loadConversationIndex(); } catch { failed = true; }
+      const sources = getTimelineSourceNodes();
+      updateTimelineCount(3, sources.length);
+      for (let i = 0; i < 10; i++) await loadConversationIndex();
+      return {
+        failed, turns: sources.length, pending: timelineState.countPending,
+        partial: timelineState.countPartial,
+        labelCorrect: getTimelineElements().count.textContent === t("timeline.countLoaded", { count: 3 }),
+      };
+    });
+    assert.equal(failedHistory.failed, true);
+    assert.equal(failedHistory.turns, 3);
+    assert.equal(failedHistory.pending, false);
+    assert.equal(failedHistory.partial, true);
+    assert.equal(failedHistory.labelCorrect, true);
+    failHistory = false;
+    const retryHistory = await extension(async () => {
+      await loadConversationIndex({ force: true });
+      return { turns: getTimelineSourceNodes().length, complete: conversationIndexState.completeness.complete };
+    });
+    assert.deepEqual(retryHistory, { turns: 47, complete: true });
+    longHistoryRegression.failedRead = failedHistory;
+    longHistoryRegression.explicitRetry = retryHistory;
     assert.equal(errors.length, 0, errors.join("\n"));
     const result = {
       browser: context.browser().version(),
@@ -641,6 +758,7 @@ const conversation = {
       highlightRegression,
       bridgeRegression,
       routeRegression,
+      longHistoryRegression,
       textOnlyPngPages: Object.keys(pngPages).length,
       imageCount: manifest.imageCount,
       uniqueImages: manifest.uniqueImageCount,

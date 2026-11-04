@@ -73,11 +73,11 @@ const createFixture = () => {
     },
     resolveConversationTitleFromApi: (data) => data?.title || "",
     isCompleteConversationMapping: () => true,
-    assessConversationCompleteness: () => ({
+    assessConversationCompleteness: (data) => ({
       chainComplete: true,
       paginated: false,
       paginationComplete: true,
-      complete: true,
+      complete: data?.partial !== true,
       pageCount: 0,
     }),
     getStrictConversationIdCandidates: () => conversationIds,
@@ -108,6 +108,9 @@ globalThis.indexTest = {
   buildConversationIndexFromApiResponse,
   setConversationIndexFailed,
   indexConversationMessages,
+  mergeIndexFromCapturedResponse,
+  applyConversationIndex,
+  isConversationIndexRefreshing,
 };`,
     sandbox,
   );
@@ -151,6 +154,78 @@ const buildResponse = (mapping, currentNodeId) => ({
     complete: true,
     pageCount: 0,
   },
+});
+
+const seedPartial = (fixture, count = 3) => {
+  const data = { ...buildResponse(buildMapping(count), `m${count}`).data, partial: true };
+  fixture.mergeIndexFromCapturedResponse({ data, conversationId: "conv-1" });
+  return data;
+};
+
+test("a ready partial capture triggers one complete read and shares its pending task", async () => {
+  const fixture = createFixture();
+  const partial = seedPartial(fixture);
+  let resolveRead, started, calls = 0;
+  const ready = new Promise((resolve) => { started = resolve; });
+  fixture.setFetch(() => {
+    calls++;
+    started();
+    return new Promise((resolve) => { resolveRead = resolve; });
+  });
+  const pending = fixture.loadConversationIndex();
+  await ready;
+  assert.equal(fixture.isConversationIndexRefreshing(), true);
+  const shared = fixture.loadConversationIndex();
+  const token = fixture.state.activeToken;
+  fixture.mergeIndexFromCapturedResponse({ data: partial, conversationId: "conv-1" });
+  assert.equal(fixture.state.activeToken, token);
+  assert.equal(fixture.isConversationIndexRefreshing(), true);
+  resolveRead(buildResponse(buildMapping(47), "m47"));
+  await Promise.all([pending, shared]);
+  assert.equal(calls, 1);
+  assert.equal(fixture.state.messages.length, 47);
+  assert.equal(fixture.state.completeness.complete, true);
+  assert.equal(fixture.isConversationIndexRefreshing(), false);
+});
+
+test("partial capture cannot downgrade a complete same-branch index", async () => {
+  const fixture = createFixture();
+  fixture.setFetch(async () => buildResponse(buildMapping(47), "m47"));
+  await fixture.loadConversationIndex();
+  const mapping = buildMapping(47);
+  const partial = { mapping: { m47: { ...mapping.m47, parent: null } }, current_node: "m47", partial: true };
+  fixture.mergeIndexFromCapturedResponse({ data: partial, conversationId: "conv-1" });
+  assert.equal(fixture.state.completeness.complete, true);
+  assert.equal(fixture.state.messages.length, 47);
+});
+
+test("failed partial completion does not poll, but explicit retry reads the network", async () => {
+  const fixture = createFixture();
+  seedPartial(fixture);
+  let calls = 0;
+  fixture.setFetch(async () => { calls++; throw new Error("offline"); });
+  await assert.rejects(fixture.loadConversationIndex());
+  await fixture.loadConversationIndex();
+  await fixture.loadConversationIndex();
+  assert.equal(calls, 1);
+  assert.equal(fixture.state.messages.length, 3);
+  fixture.setFetch(async (_, options) => {
+    assert.equal(options.skipCaptured, true);
+    return buildResponse(buildMapping(47), "m47");
+  });
+  await fixture.loadConversationIndex({ force: true });
+  assert.equal(fixture.state.messages.length, 47);
+});
+
+test("a stale in-memory index receives one background refresh", async () => {
+  const fixture = createFixture();
+  fixture.applyConversationIndex(fixture.buildConversationIndexFromApiResponse(buildResponse(buildMapping(47), "m47").data));
+  fixture.state.status = "stale";
+  let calls = 0;
+  fixture.setFetch(async () => { calls++; return buildResponse(buildMapping(48), "m48"); });
+  await fixture.loadConversationIndex();
+  assert.equal(calls, 1);
+  assert.equal(fixture.state.messages.length, 48);
 });
 
 test("a failed refresh keeps the previously loaded 47-message index", async () => {

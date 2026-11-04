@@ -67,6 +67,7 @@ const setConversationIndexFailed = (conversationId, error) => {
   if (hasPrevious && sameConversation) {
     conversationIndexState.status = "stale";
     conversationIndexState.conversationId = previousId || conversationId || "";
+    if (timelineState.visible && typeof scheduleTimelineRefresh === "function") scheduleTimelineRefresh();
     return;
   }
 
@@ -312,6 +313,7 @@ const invalidateConversationIndex = () => {
   conversationIndexState.error = null;
   clearConversationIndexMaps();
   conversationIndexRestoreId = "";
+  conversationIndexAutoRefreshId = "";
 };
 
 /*
@@ -605,7 +607,7 @@ const getFreshConversationIndex = () => {
 const isConversationIndexStale = () =>
   conversationIndexState.status === "stale" && conversationIndexState.messages.length > 0;
 
-const isConversationIndexRefreshing = () => conversationIndexState.status === "loading";
+const isConversationIndexRefreshing = () => Boolean(conversationIndexState.loadingPromise) || conversationIndexState.status === "loading";
 
 // True while a stored index for this page load is being read from extension
 // storage. The timeline uses it to show "loading" instead of a partial count.
@@ -620,6 +622,11 @@ const canLoadConversationIndex = () => {
     return true;
   }
   return !candidates.some((id) => isConversationAccessBlocked(id));
+};
+
+const canAutomaticallyLoadConversationIndex = () => {
+  const id = getCurrentConversationIndexId();
+  return Boolean(id && conversationIndexAutoRefreshId !== id);
 };
 
 const loadConversationIndex = async (options = {}) => {
@@ -646,22 +653,23 @@ const loadConversationIndex = async (options = {}) => {
     throw new ExportApiError("CANCELLED", "Conversation changed during loading.", { fallbackAllowed: false });
   }
   const usableIndex = getReadyConversationIndex();
-  const restoredOnly = usableIndex?.dataSource === "storage-cache";
-  if (!options.force && usableIndex && !restoredOnly) {
-    return usableIndex;
-  }
-  if (!options.force && restoredOnly && conversationIndexAutoRefreshId === conversationId) {
-    // One automatic refresh per conversation per page load: a stored index is
-    // never polled, and the retry button is the explicit path.
-    return usableIndex;
-  }
-
   if (
     !options.force &&
     conversationIndexState.loadingPromise &&
     conversationIndexState.conversationId === conversationId
   ) {
     return conversationIndexState.loadingPromise;
+  }
+
+  if (!options.force && usableIndex?.status === "ready" &&
+      usableIndex.completeness?.complete === true && usableIndex.dataSource !== "storage-cache") {
+    return usableIndex;
+  }
+  if (!options.force && conversationIndexAutoRefreshId === conversationId) {
+    // Partial captures and stale caches get one automatic completion attempt.
+    // A failed attempt stays settled until an explicit retry or route change.
+    if (usableIndex) return usableIndex;
+    throw conversationIndexState.error || new ExportApiError("INCOMPLETE_RESPONSE", "Conversation history is unavailable.", { fallbackAllowed: true });
   }
 
   if (!canLoadConversationIndex()) {
@@ -716,6 +724,7 @@ const loadConversationIndex = async (options = {}) => {
     signal: readController.signal,
     timeoutMs: options.timeoutMs,
     retries: options.retries,
+    skipCaptured: options.force === true,
   })
     .then((response) => {
       if (token !== conversationIndexState.activeToken ||
@@ -780,16 +789,19 @@ const loadConversationIndex = async (options = {}) => {
       if (conversationIndexReadController === readController) conversationIndexReadController = null;
       if (token === conversationIndexState.activeToken) {
         conversationIndexState.loadingPromise = null;
+        if (timelineState.visible && typeof scheduleTimelineRefresh === "function") scheduleTimelineRefresh();
       }
     });
 
   conversationIndexState.loadingPromise = loadingPromise;
+  if (timelineState.visible && typeof scheduleTimelineRefresh === "function") scheduleTimelineRefresh();
   return loadingPromise;
 };
 
 const getConversationIndex = (options = {}) => loadConversationIndex(options);
 
 const mergeIndexFromCapturedResponse = (captured) => {
+  if (!getConversationIndexIdCandidates().includes(captured.conversationId || getCurrentConversationIndexId())) return false;
   const previous = conversationIndexState;
   const next = buildConversationIndexFromApiResponse(captured.data, {
     conversationId: captured.conversationId || getCurrentConversationIndexId(),
@@ -797,6 +809,11 @@ const mergeIndexFromCapturedResponse = (captured) => {
   });
   const previousBranch = previous.branchId || "";
   const nextBranch = next.branchId || "";
+  if (previous.completeness?.complete === true && next.completeness?.complete === false) {
+    // A recent page fragment provides no evidence that the verified history
+    // became shorter. Keep both its count and its completeness unchanged.
+    return false;
+  }
   if (previousBranch && nextBranch && previousBranch !== nextBranch && next.completeness?.complete === false) {
     // Passive capture never replaces a verified branch. The timeline keeps its
     // full index and the next explicit refresh re-checks the branch.
@@ -808,8 +825,8 @@ const mergeIndexFromCapturedResponse = (captured) => {
   next.byMessageId = maps.byMessageId;
   next.byIndex = maps.byIndex;
   next.byUserOrder = maps.byUserOrder;
-  conversationIndexState.activeToken += 1;
-  conversationIndexState.loadingPromise = null;
+  // Passive data must not invalidate an explicit full-history read. The request
+  // owns its token and promise until it settles or the route changes.
   applyConversationIndex(next);
   return true;
 };
@@ -895,8 +912,8 @@ window.__CGPT_TOOLKIT_INDEX_DEBUG__ = {
       conversationId: captured.conversationId || "",
       captured: true,
       messageCount: Object.keys(mapping).length,
-      complete: typeof isCompleteConversationMapping === "function"
-        ? isCompleteConversationMapping(captured.data)
+      complete: typeof assessConversationCompleteness === "function"
+        ? assessConversationCompleteness(captured.data).complete
         : null,
       url: captured.url || "",
     };

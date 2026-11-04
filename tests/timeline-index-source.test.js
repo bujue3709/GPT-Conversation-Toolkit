@@ -54,7 +54,8 @@ const buildIndex = (count, overrides = {}) => {
   };
 };
 
-const createFixture = ({ index = null, liveIds = [], detachedIds = [], blocked = false, restoring = false, indexStatus = "ready", indexConversationId = "conv-1", indexMessageCount = 0, indexIds = ["conv-1"] } = {}) => {
+const createFixture = ({ index = null, liveIds = [], detachedIds = [], blocked = false, restoring = false, refreshing = false, autoCompletion = false, indexStatus = "ready", indexConversationId = "conv-1", indexMessageCount = 0, indexIds = ["conv-1"] } = {}) => {
+  const timers = [];
   const live = liveIds.map((id) => {
     const node = new FakeNode();
     node.messageId = id;
@@ -83,16 +84,18 @@ const createFixture = ({ index = null, liveIds = [], detachedIds = [], blocked =
     getConversationMessageEntries: () => live,
     getDomMessageIdCandidates: (node) => (node?.messageId ? [node.messageId] : []),
     canLoadConversationIndex: () => !blocked,
+    canAutomaticallyLoadConversationIndex: () => autoCompletion,
     loadConversationIndex: async () => index,
     scheduleTimelineRefresh: () => {},
     conversationIndexState: {
       status: indexStatus,
+      loadingPromise: refreshing ? Promise.resolve() : null,
       conversationId: indexConversationId,
       messages: Array.from({ length: indexMessageCount }, (_, index) => ({ messageId: `old${index + 1}` })),
     },
     getConversationIndexIdCandidates: () => indexIds,
     isConversationIndexRestoring: () => restoring,
-    setTimeout: () => 1,
+    setTimeout: (callback) => { timers.push(callback); return timers.length; },
     clearTimeout: () => {},
     Date,
     console,
@@ -103,7 +106,8 @@ const createFixture = ({ index = null, liveIds = [], detachedIds = [], blocked =
 globalThis.timelineTest = { getTimelineSourceNodes };`,
     sandbox,
   );
-  return { get: sandbox.timelineTest.getTimelineSourceNodes, state: sandbox.timelineState };
+  return { get: sandbox.timelineTest.getTimelineSourceNodes, state: sandbox.timelineState, timers,
+    setRefreshing: (value) => { sandbox.conversationIndexState.loadingPromise = value ? Promise.resolve() : null; } };
 };
 
 test("47 indexed turns survive when only 6 unknown DOM turns are mounted", () => {
@@ -221,4 +225,21 @@ test("the first render shows a loading count instead of a partial 5/5+", () => {
   });
   switched.get();
   assert.equal(switched.state.countPending, true);
+});
+test("a partial first capture schedules completion and hides the false denominator", () => {
+  const fixture = createFixture({ index: buildIndex(3, { completeness: { complete: false } }), autoCompletion: true });
+  assert.equal(fixture.get().length, 3);
+  assert.equal(fixture.state.countPending, true);
+  assert.equal(fixture.timers.length, 1);
+});
+
+test("partial refresh settles without a stuck placeholder or repeated request", () => {
+  const fixture = createFixture({ index: buildIndex(3, { completeness: { complete: false } }), refreshing: true });
+  fixture.get();
+  assert.equal(fixture.state.countPending, true);
+  fixture.setRefreshing(false);
+  fixture.get();
+  assert.equal(fixture.state.countPending, false);
+  assert.equal(fixture.state.countPartial, true);
+  assert.equal(fixture.timers.length, 0);
 });

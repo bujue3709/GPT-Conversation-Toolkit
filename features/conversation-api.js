@@ -325,6 +325,11 @@ const getConversationPageInfo = (data) =>
   data?.conversation?.pageInfo ||
   null;
 
+const hasOlderConversationPages = (data) => {
+  const pageInfo = getConversationPageInfo(data);
+  return pageInfo?.has_previous_page === true || pageInfo?.hasPreviousPage === true;
+};
+
 /*
  * The message chain reaching the root only proves the active branch is
  * self-consistent. A paginated response can stop at a server page boundary on
@@ -342,7 +347,7 @@ const assessConversationCompleteness = (data, meta = {}) => {
     } else if (meta.paginationComplete === false) {
       paginationComplete = false;
     } else {
-      paginationComplete = pageInfo?.has_previous_page !== true;
+      paginationComplete = !hasOlderConversationPages(data);
     }
   }
   return {
@@ -370,11 +375,9 @@ const getPaginatedConversationApiUrl = (origin, conversationId, before = "") => 
 };
 
 const getPaginatedConversationCursor = (data) => {
-  const pageInfo = data?.page_info || data?.pageInfo || {};
-  const hasPreviousPage =
-    pageInfo.has_previous_page === true || pageInfo.hasPreviousPage === true;
+  const pageInfo = getConversationPageInfo(data) || {};
   const cursor = pageInfo.start_cursor || pageInfo.startCursor || "";
-  return hasPreviousPage && typeof cursor === "string" ? cursor : "";
+  return hasOlderConversationPages(data) && typeof cursor === "string" ? cursor : "";
 };
 
 const mergePaginatedConversationMessages = (olderMessages, newerMessages) => {
@@ -938,7 +941,12 @@ const fetchPaginatedConversationById = async (conversationId, options = {}) => {
         conversationId,
         firstData.current_node || firstData.current_node_id || "",
       );
-      const paginationComplete = getConversationPageInfo(lastPageData)?.has_previous_page !== true;
+      const paginationComplete = !hasOlderConversationPages(lastPageData);
+      if (!paginationComplete) {
+        throw new ExportApiError("INCOMPLETE_RESPONSE", "Older messages exist but no usable page cursor was returned.", {
+          fallbackAllowed: true, url: firstResponse.url,
+        });
+      }
       const data = {
         ...firstData,
         conversation_id: firstData.conversation_id || conversationId,
@@ -1038,7 +1046,7 @@ const fetchConversationById = async (conversationId, options = {}) => {
           });
         }
         const completeness = assessConversationCompleteness(response.data, { source: category });
-        if (!completeness.chainComplete) {
+        if (!completeness.complete) {
           throw new ExportApiError(
             "INCOMPLETE_RESPONSE",
             "Conversation API returned only part of the active message path.",
@@ -1093,7 +1101,7 @@ const fetchConversationById = async (conversationId, options = {}) => {
 };
 
 const fetchConversationByIdCandidatesInternal = async (candidates, options = {}) => {
-  if (typeof getCapturedConversationApiResponse === "function") {
+  if (!options.skipCaptured && typeof getCapturedConversationApiResponse === "function") {
     for (const conversationId of candidates) {
       const captured = getCapturedConversationApiResponse([conversationId]);
       if (!captured?.data) {
@@ -1102,7 +1110,7 @@ const fetchConversationByIdCandidatesInternal = async (candidates, options = {})
       const completeness = assessConversationCompleteness(captured.data, {
         source: "captured-page-response",
       });
-      if (completeness.chainComplete) {
+      if (completeness.complete) {
         return {
           ...captured,
           completeness,
@@ -1188,6 +1196,7 @@ const getConversationRequestKey = (candidates, options = {}) =>
     options.fullConversationOnly ? "full" : options.legacyOnly ? "legacy" : "any",
     options.timeoutMs ?? EXPORT_API_TIMEOUT_MS,
     options.retries ?? EXPORT_API_RETRY_COUNT,
+    options.skipCaptured ? "network" : "capture-or-network",
   ].join("|");
 
 const awaitPromiseWithSignal = (promise, signal) => {

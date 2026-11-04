@@ -161,17 +161,17 @@ const getTimelineJumpTarget = (item) => {
 
 let timelineSourceCache = { signature: "", sources: [] };
 let timelineIndexRetryTimer = null;
-let timelineIndexRetryAt = 0;
 
 /*
- * A missing or stale index is refreshed in the background, but never in a poll
- * loop: one request per throttle window, and a longer pause after a failure.
+ * A missing, partial or stale index gets one background completion attempt.
+ * Failures leave the retry button available instead of starting a polling loop.
  */
 const requestTimelineIndexRefresh = () => {
-  if (timelineIndexRetryTimer || Date.now() < timelineIndexRetryAt) return;
+  if (timelineIndexRetryTimer) return;
   if (typeof loadConversationIndex !== "function") return;
   if (typeof canLoadConversationIndex === "function" && !canLoadConversationIndex()) return;
-  if (conversationIndexState.status === "loading") return;
+  if (typeof canAutomaticallyLoadConversationIndex === "function" && !canAutomaticallyLoadConversationIndex()) return;
+  if (conversationIndexState.loadingPromise || conversationIndexState.status === "loading") return;
   timelineIndexRetryTimer = setTimeout(() => {
     timelineIndexRetryTimer = null;
     loadConversationIndex()
@@ -179,13 +179,16 @@ const requestTimelineIndexRefresh = () => {
         if (timelineState.visible) scheduleTimelineRefresh();
       })
       .catch(() => {
-        timelineIndexRetryAt = Date.now() + 30000;
+        if (timelineState.visible) scheduleTimelineRefresh();
       });
   }, 800);
 };
 
 const getTimelineSourceNodes = () => {
   const index = typeof getReadyConversationIndex === "function" ? getReadyConversationIndex() : null;
+  const refreshing = Boolean(conversationIndexState.loadingPromise) || conversationIndexState.status === "loading";
+  const autoCompletion = typeof canAutomaticallyLoadConversationIndex === "function"
+    ? canAutomaticallyLoadConversationIndex() : conversationIndexState.status === "idle";
   const signature = [
     state.conversationKey,
     state.messageCacheRevision,
@@ -194,6 +197,8 @@ const getTimelineSourceNodes = () => {
     index?.status,
     index?.branchId,
     index?.completeness?.complete,
+    refreshing,
+    autoCompletion,
     // The pending placeholder must clear even when no index ever arrives, so the
     // read state itself participates in the cache signature.
     index ? "indexed" : (typeof conversationIndexState !== "undefined" ? conversationIndexState.status : "unknown"),
@@ -211,7 +216,7 @@ const getTimelineSourceNodes = () => {
   timelineState.countStale = Boolean(index && index.status === "stale");
   timelineState.indexUpdatedAt = index ? (index.updatedAt || index.loadedAt || 0) : 0;
   timelineState.indexBlocked =
-    !index && typeof canLoadConversationIndex === "function" && !canLoadConversationIndex();
+    typeof canLoadConversationIndex === "function" && !canLoadConversationIndex();
   /*
    * Before the first index exists, showing "5/5+" was indistinguishable from a
    * broken recovery. While the stored index is being read or the first request
@@ -230,7 +235,8 @@ const getTimelineSourceNodes = () => {
     currentIndexIds.length > 0 &&
     !currentIndexIds.includes(indexConversationId) &&
     Boolean(conversationIndexState.messages.length);
-  timelineState.countPending = !index && (
+  timelineState.countPending = timelineState.countPartial && !timelineState.indexBlocked && (
+    refreshing || autoCompletion ||
     indexBelongsToOtherConversation ||
     (typeof isConversationIndexRestoring === "function" && isConversationIndexRestoring()) ||
     (typeof conversationIndexState !== "undefined" &&
@@ -298,7 +304,7 @@ const getTimelineSourceNodes = () => {
       requestTimelineIndexRefresh();
     } else {
       timelineState.branchDiverged = false;
-      if (index.status === "stale") {
+      if (index.status === "stale" || index.completeness?.complete === false) {
         requestTimelineIndexRefresh();
       }
     }
@@ -1822,7 +1828,6 @@ const handleTimelineClick = (event) => {
     target instanceof Element ? target.closest('[data-action="timeline-index-retry"]') : null;
   if (retryButton instanceof HTMLElement) {
     event.preventDefault();
-    timelineIndexRetryAt = 0;
     if (typeof loadConversationIndex === "function") {
       loadConversationIndex({ force: true })
         .then(() => {
@@ -2030,8 +2035,7 @@ const updateTimelineCount = (currentNodeOrder, totalCount) => {
     : null;
 
   if (timelineState.countPending) {
-    // No index yet and the first read/restore is still running: a partial
-    // "5/5+" here would read as a failed recovery, so show a placeholder.
+    // A page fragment is not a full-history denominator while completion runs.
     count.textContent = t("timeline.countLoading");
     count.dataset.state = "loading";
     count.title = t("timeline.countLoadingTitle");
@@ -2042,7 +2046,8 @@ const updateTimelineCount = (currentNodeOrder, totalCount) => {
     return;
   }
 
-  count.textContent = `${current}/${total}${timelineState.countPartial ? "+" : ""}`;
+  count.textContent = timelineState.countPartial
+    ? t("timeline.countLoaded", { count: total }) : `${current}/${total}`;
   count.dataset.state = timelineState.indexBlocked
     ? "blocked"
     : timelineState.countStale
@@ -2052,10 +2057,10 @@ const updateTimelineCount = (currentNodeOrder, totalCount) => {
         : "complete";
   const reasonKey = timelineState.indexBlocked
     ? "timeline.indexUnavailable"
-    : timelineState.countStale
-      ? "timeline.indexStale"
-      : timelineState.countPartial
-        ? "timeline.partialCount"
+    : timelineState.countPartial
+      ? "timeline.partialCount"
+      : timelineState.countStale
+        ? "timeline.indexStale"
         : "timeline.fullCount";
   const updatedAt = timelineState.indexUpdatedAt
     ? new Date(timelineState.indexUpdatedAt).toLocaleString()
@@ -2063,7 +2068,8 @@ const updateTimelineCount = (currentNodeOrder, totalCount) => {
   count.title = updatedAt
     ? `${t(reasonKey)} ${t("timeline.indexUpdatedAt", { time: updatedAt })}`
     : t(reasonKey);
-  count.setAttribute("aria-label", t("timeline.countAria", { current, total }));
+  count.setAttribute("aria-label", timelineState.countPartial
+    ? `${count.textContent}. ${t(reasonKey)}` : t("timeline.countAria", { current, total }));
 
   if (retry instanceof HTMLElement) {
     retry.hidden = !(timelineState.indexBlocked || timelineState.countStale || timelineState.countPartial);

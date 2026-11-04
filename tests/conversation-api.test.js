@@ -69,6 +69,9 @@ globalThis.apiTest = {
   );
 
   sandbox.apiTest.requests = requests;
+  sandbox.apiTest.setCaptured = (data) => {
+    sandbox.getCapturedConversationApiResponse = () => data;
+  };
   sandbox.apiTest.setFetch = (impl) => {
     sandbox.fetch = async (url, init) => {
       requests.push(String(url));
@@ -119,6 +122,56 @@ test("completeness needs paging information, not only a terminating chain", () =
     api.assessConversationCompleteness(partial, { paginationComplete: true }).complete,
     true,
   );
+});
+
+test("camelCase paging flags never certify a partial history", () => {
+  const api = createFixture();
+  const partial = { ...completeMapping(), pageInfo: { hasPreviousPage: true, startCursor: "older" } };
+  assert.equal(api.assessConversationCompleteness(partial).complete, false);
+});
+
+test("partial capture and ordinary response continue through older pages", async () => {
+  const api = createFixture();
+  const partial = { ...completeMapping(), pageInfo: { hasPreviousPage: true, startCursor: "older" } };
+  api.setCaptured({ data: partial, captured: true, conversationId: "conv-1" });
+  api.setFetch(async (url) => {
+    const parsed = new URL(url);
+    if (parsed.pathname === "/api/auth/session") return sessionResponse();
+    if (parsed.pathname === "/backend-api/conversation/conv-1") return jsonResponse(partial);
+    if (parsed.pathname === "/backend-api/conversations/conv-1") return jsonResponse({
+      messages: [completeMapping().mapping.m2.message],
+      pageInfo: { hasPreviousPage: true, startCursor: "older" },
+    });
+    assert.equal(parsed.searchParams.get("before"), "older");
+    return jsonResponse({ messages: [completeMapping().mapping.m1.message], pageInfo: { hasPreviousPage: false } });
+  });
+  const result = await api.fetchConversationByIdCandidates(["conv-1"]);
+  assert.equal(result.completeness.complete, true);
+  assert.equal(result.pageCount, 2);
+  assert.equal(Object.values(result.data.mapping).filter((node) => node.message).length, 2);
+  assert.equal(api.requests.filter((url) => url.includes("/messages?")).length, 1);
+});
+
+test("explicit refresh bypasses even a complete captured response", async () => {
+  const api = createFixture();
+  api.setCaptured({ data: completeMapping(), captured: true, conversationId: "conv-1" });
+  api.setFetch(async (url) => String(url).includes("/api/auth/session")
+    ? sessionResponse() : jsonResponse({ ...completeMapping(), title: "fresh" }));
+  const result = await api.fetchConversationByIdCandidates(["conv-1"], { skipCaptured: true });
+  assert.equal(result.data.title, "fresh");
+  assert.notEqual(api.getConversationRequestKey(["conv-1"]), api.getConversationRequestKey(["conv-1"], { skipCaptured: true }));
+});
+
+test("missing cursor with older pages is a failure, never a complete count", async () => {
+  const api = createFixture();
+  api.setFetch(async (url) => {
+    if (String(url).includes("/api/auth/session")) return sessionResponse();
+    const pageInfo = { hasPreviousPage: true };
+    return jsonResponse(String(url).includes("/conversations/")
+      ? { messages: [completeMapping().mapping.m2.message], pageInfo }
+      : { ...completeMapping(), pageInfo });
+  });
+  await assert.rejects(api.fetchConversationByIdCandidates(["conv-1"]), (error) => error.code === "INCOMPLETE_RESPONSE");
 });
 
 test("a refusing session endpoint falls back to cookie-only conversation reads", async () => {
