@@ -220,7 +220,7 @@ const themeAttributeFilter = ["class", "data-theme", "style"];
 const TOOLKIT_BOOTSTRAP_FLAG = "__chatgptConversationToolkitBootstrapped";
 
 const TOOLKIT_CONFIG_KEY = "chatgpt-toolkit-config-v2";
-let TOOLKIT_EXPORT_IMAGES = true;
+let TOOLKIT_EXPORT_IMAGES = false;
 const TOOLKIT_CONFIG_DEFAULTS = Object.freeze({
   keepLatest: 20,
   autoReoptimizeBuffer: 10,
@@ -230,7 +230,7 @@ const TOOLKIT_CONFIG_DEFAULTS = Object.freeze({
   messageMode: TOOLKIT_MESSAGE_MODE_LOADED,
   exportFormat: TOOLKIT_EXPORT_FORMAT_JSON,
   exportRole: TOOLKIT_EXPORT_ROLE_ALL,
-  exportImages: true,
+  exportImages: false,
   latexCopyFormat: TOOLKIT_LATEX_COPY_FORMAT_RAW,
 });
 const TOOLKIT_CONFIG_LIMITS = Object.freeze({
@@ -256,7 +256,7 @@ const normalizeToolkitConfigInteger = (value, fallback, limits) => {
 };
 
 const normalizeToolkitConfig = (config = {}) => ({
-  exportImages: config.exportImages !== false,
+  exportImages: config.exportImages === true,
   keepLatest: normalizeToolkitConfigInteger(
     config.keepLatest,
     TOOLKIT_CONFIG_DEFAULTS.keepLatest,

@@ -4,24 +4,7 @@ const EXPORT_PREVIEW_STORE_LIMIT = 32 * 1024 * 1024;
 const EXPORT_ZIP_LIMIT = 2 * 1024 * 1024 * 1024;
 
 const createExportArchiveSink = async (filename) => {
-  if (typeof window.showSaveFilePicker === "function") {
-    try {
-      const handle = await window.showSaveFilePicker({
-        suggestedName: filename,
-        types: [
-          {
-            description: "ChatGPT archive",
-            accept: { "application/zip": [".zip"] },
-          },
-        ],
-      });
-      return await handle.createWritable();
-    } catch (error) {
-      if (error.name !== "SecurityError" && error.name !== "NotAllowedError")
-        throw error;
-      // Browser contexts without file-picker access use a bounded Blob fallback.
-    }
-  }
+  // Use the browser download manager, preserving its directory and download history.
   let chunks = [];
   let size = 0;
   return {

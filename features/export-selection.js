@@ -14,7 +14,7 @@ const exportSelectionState = {
   scope: EXPORT_SCOPE_ALL,
   roleFilter: TOOLKIT_EXPORT_ROLE_ALL,
   format: TOOLKIT_EXPORT_FORMAT_JSON,
-  includeImages: true,
+  includeImages: false,
   page: 0,
   lastSelectedTurnIndex: -1,
   error: null,
@@ -63,7 +63,7 @@ const resetExportSelectionState = () => {
   exportSelectionState.page = 0;
   exportSelectionState.lastSelectedTurnIndex = -1;
   exportSelectionState.error = null;
-  exportSelectionState.includeImages = config.exportImages !== false;
+  exportSelectionState.includeImages = config.exportImages === true;
 };
 
 const closeExportSelectionModal = () => {
@@ -231,9 +231,12 @@ const renderExportSelectionModal = () => {
         <button type="button" class="chatgpt-toolkit-prompt-close" data-export-selection-action="close">${t("exportSelection.close")}</button>
       </div>
       ${partialWarning}
-      <label class="chatgpt-toolkit-form-label">
-        <input type="checkbox" data-export-selection-field="images" ${exportSelectionState.includeImages ? "checked" : ""}>
-        ${t("exportImages.include")}
+      <label class="chatgpt-toolkit-form-group">
+        <span class="chatgpt-toolkit-form-label">${t("exportImages.label")}</span>
+        <select class="chatgpt-toolkit-input" data-export-selection-field="images">
+          <option value="false"${!exportSelectionState.includeImages ? " selected" : ""}>${t("exportImages.textOnly")}</option>
+          <option value="true"${exportSelectionState.includeImages ? " selected" : ""}>${t("exportImages.include")}</option>
+        </select>
       </label>
       <div class="chatgpt-toolkit-export-controls">
         <label class="chatgpt-toolkit-form-group">
@@ -493,7 +496,7 @@ const ensureExportSelectionModal = () => {
         return;
       }
       const field = target.dataset.exportSelectionField;
-      if (field === "images") exportSelectionState.includeImages = target.checked;
+      if (field === "images") exportSelectionState.includeImages = target.value === "true";
       if (field === "scope") {
         exportSelectionState.scope = target.value === EXPORT_SCOPE_SELECTED
           ? EXPORT_SCOPE_SELECTED

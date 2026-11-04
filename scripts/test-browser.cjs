@@ -182,7 +182,7 @@ const conversation = {
     await extension(() => {
       Object.defineProperty(window, "showSaveFilePicker", {
         configurable: true,
-        value: undefined,
+        value: () => { throw new Error("Save picker must not be invoked"); },
       });
     });
     // Browser DOM equivalence and resource-load regression, in the real content-script world.
@@ -215,15 +215,29 @@ const conversation = {
     assert.deepEqual(reading.texts, ["beforeafter", "keep", "keep", "svgkeep"]);
     await page.locator('[data-action="export"]').click();
     await page.locator("[data-export-selection-export-button]").waitFor();
+    await page.locator(".chatgpt-toolkit-export-panel").screenshot({ path: path.join(output, "export-dialog.png") });
+    // Images present: default export still downloads the selected standalone format.
+    for (const format of ["md", "json", "txt"]) {
+      await page.locator('[data-export-selection-field="format"]').selectOption(format);
+      assert.equal(await page.locator('[data-export-selection-field="images"]').inputValue(), "false");
+      const plainPromise = page.waitForEvent("download");
+      await page.locator("[data-export-selection-export-button]").click();
+      const plain = await plainPromise;
+      assert(plain.suggestedFilename().endsWith("." + format));
+      await plain.saveAs(path.join(output, "text-only." + format));
+      await page.waitForFunction(() => !document.querySelector("#chatgpt-toolkit-export-selection-modal")?.classList.contains("is-visible"));
+      await page.locator('[data-action="export"]').click();
+      await page.locator("[data-export-selection-export-button]").waitFor();
+    }
     await page
       .locator('[data-export-selection-field="format"]')
       .selectOption("png");
-    await page.locator('[data-export-selection-field="images"]').uncheck();
+    assert.equal(await page.locator('[data-export-selection-field="images"]').inputValue(), "false");
     assert.equal(
       await extension(() => exportSelectionState.includeImages),
       false,
     );
-    await page.locator('[data-export-selection-field="images"]').check();
+    await page.locator('[data-export-selection-field="images"]').selectOption("true");
     const downloadPromise = page.waitForEvent("download");
     await page.locator("[data-export-selection-export-button]").click();
     const download = await downloadPromise;
@@ -421,30 +435,10 @@ const conversation = {
     releaseImage();
     assert.equal(await cancelled, null);
     assert.equal(await extension(() => exportInProgress), false);
-    // Repeated PNG jobs use the writable-file path with backpressure, retaining
-    // only counters in the mock sink; no archive-sized test buffer is introduced.
-    await extension(() => {
-      window.__fixtureWrites = { bytes: 0, closed: 0, active: 0, maxActive: 0 };
-      Object.defineProperty(window, "showSaveFilePicker", {
-        configurable: true,
-        value: async () => ({
-          createWritable: async () => ({
-            async write(chunk) {
-              const s = window.__fixtureWrites;
-              s.active++;
-              s.maxActive = Math.max(s.maxActive, s.active);
-              await new Promise((r) => setTimeout(r, 0));
-              s.bytes += chunk.byteLength;
-              s.active--;
-            },
-            async close() {
-              window.__fixtureWrites.closed++;
-            },
-            async abort() {},
-          }),
-        }),
-      });
-    });
+    // Repeated exports exercise the real browser download path.
+    let repeatedDownloads = 0;
+    const countDownload = () => { repeatedDownloads++; };
+    page.on("download", countDownload);
     await cdp.send("HeapProfiler.collectGarbage");
     const heapBefore = (await cdp.send("Runtime.getHeapUsage")).usedSize;
     const repeated = await extension(async () => {
@@ -463,12 +457,14 @@ const conversation = {
       let temporaryDirectories = 0;
       for await (const [name] of root.entries())
         if (name.startsWith("chatgpt-toolkit-export-")) temporaryDirectories++;
-      return { ...window.__fixtureWrites, temporaryDirectories };
+      return { temporaryDirectories };
     });
     await cdp.send("HeapProfiler.collectGarbage");
     const heapAfter = (await cdp.send("Runtime.getHeapUsage")).usedSize;
-    assert.equal(repeated.closed, 10);
-    assert.equal(repeated.maxActive, 1);
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    page.off("download", countDownload);
+    assert.equal(repeatedDownloads, 10);
+    repeated.downloads = repeatedDownloads;
     assert.equal(repeated.temporaryDirectories, 0);
     assert(
       heapAfter - heapBefore < 8 * 1024 * 1024,
