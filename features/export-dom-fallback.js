@@ -21,6 +21,14 @@ const collectDomFallbackEntries = () => {
   });
   const mergedEntries = [...entries];
   const seenKeys = new Set(entries.map((entry) => entry.key));
+  // Text caches intentionally omit image-only turns; inspect loaded message
+  // containers directly at export time to preserve those turns as well.
+  collectMessageNodesFromDom().forEach((node, index) => {
+    const key = getMessageNodeKey(node, index);
+    if (seenKeys.has(key) || !collectDomExportImages(node).length) return;
+    seenKeys.add(key);
+    mergedEntries.push({ key, node, role: detectRole(node), text: extractMessageText(node), order: getMessageNodeOrder(node, index) });
+  });
 
   if (state.isCollapsed) {
     state.collapsedNodes.forEach((entry, index) => {
@@ -33,7 +41,7 @@ const collectDomFallbackEntries = () => {
         return;
       }
       const text = extractMessageText(node);
-      if (!text) {
+      if (!text && !collectDomExportImages(node).length) {
         return;
       }
       seenKeys.add(key);
@@ -42,13 +50,13 @@ const collectDomFallbackEntries = () => {
         role: detectRole(node),
         text,
         order: getMessageNodeOrder(node, index),
-        node: node.isConnected ? node : null,
+        node,
         lastSeenAt: Date.now(),
       });
     });
   }
 
-  return mergedEntries;
+  return mergedEntries.sort((a, b) => (a.order || 0) - (b.order || 0));
 };
 
 const normalizeDomFallbackMessage = (message, index) => ({
@@ -59,8 +67,10 @@ const normalizeDomFallbackMessage = (message, index) => ({
 
 const collectMessagesFromDomFallback = (options = {}) => {
   const entries = collectDomFallbackEntries();
-  const messages = buildMessagePayloadFromEntries(entries)
-    .map((message, index) => normalizeDomFallbackMessage(message, index + 1));
+  const messages = entries.map((entry, index) => ({
+    ...normalizeDomFallbackMessage(entry, index + 1),
+    images: collectDomExportImages(entry.node),
+  }));
 
   if (messages.length === 0) {
     throw new ExportApiError("EMPTY_FALLBACK", "No loaded messages are available to export.", {

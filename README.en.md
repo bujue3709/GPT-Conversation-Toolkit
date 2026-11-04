@@ -132,6 +132,8 @@ The toolbar footer also includes two lightweight links:
 - The footer shows the resulting turn and message counts, and disables export when no messages remain after filtering.
 - Settings control the default export format and content; available formats are `.json`, `.txt`, `.md`, and `.png`.
 - Export prefers API conversation data, so it can still export the full conversation even when only part of the virtualized DOM is mounted.
+- Enable “Include images” to export selected image-bearing messages as an offline ZIP with Markdown, JSON, original images and a manifest. TXT and PNG add their corresponding files; PNG pages display actual images and Markdown uses relative paths.
+- Uploaded images, generated images, tool image outputs and Markdown image links are supported. Missing images are reported explicitly. Downloads, caches and PNG decoding are bounded, and exports can be cancelled. See [image export and resource limits](docs/image-export.md).
 - If API data is unavailable, export falls back to loaded/cached messages and displays a partial-data warning.
 
 ### Search

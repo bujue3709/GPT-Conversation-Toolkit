@@ -14,10 +14,12 @@ const exportSelectionState = {
   scope: EXPORT_SCOPE_ALL,
   roleFilter: TOOLKIT_EXPORT_ROLE_ALL,
   format: TOOLKIT_EXPORT_FORMAT_JSON,
+  includeImages: true,
   page: 0,
   lastSelectedTurnIndex: -1,
   error: null,
   previousFocus: null,
+  preparationController: null,
 };
 
 let exportSelectionEscapeBound = false;
@@ -61,11 +63,18 @@ const resetExportSelectionState = () => {
   exportSelectionState.page = 0;
   exportSelectionState.lastSelectedTurnIndex = -1;
   exportSelectionState.error = null;
+  exportSelectionState.includeImages = config.exportImages !== false;
 };
 
 const closeExportSelectionModal = () => {
+  cancelConversationExport();
+  exportSelectionState.preparationController?.abort();
+  exportSelectionState.preparationController = null;
   exportSelectionState.isOpen = false;
   exportSelectionState.loadToken += 1;
+  exportSelectionState.preparedExport = null;
+  exportSelectionState.turns = [];
+  exportSelectionState.selectedTurnIds.clear();
   const modal = getExportSelectionModal();
   if (modal instanceof HTMLElement) {
     modal.classList.remove("is-visible");
@@ -222,6 +231,10 @@ const renderExportSelectionModal = () => {
         <button type="button" class="chatgpt-toolkit-prompt-close" data-export-selection-action="close">${t("exportSelection.close")}</button>
       </div>
       ${partialWarning}
+      <label class="chatgpt-toolkit-form-label">
+        <input type="checkbox" data-export-selection-field="images" ${exportSelectionState.includeImages ? "checked" : ""}>
+        ${t("exportImages.include")}
+      </label>
       <div class="chatgpt-toolkit-export-controls">
         <label class="chatgpt-toolkit-form-group">
           <span class="chatgpt-toolkit-form-label">${t("exportSelection.scopeLabel")}</span>
@@ -362,6 +375,9 @@ const setExportSelectionTurnChecked = (turnIndex, checked, extendRange = false) 
 };
 
 const loadExportSelectionData = async () => {
+  exportSelectionState.preparationController?.abort();
+  const controller = new AbortController();
+  exportSelectionState.preparationController = controller;
   const token = exportSelectionState.loadToken + 1;
   exportSelectionState.loadToken = token;
   exportSelectionState.loading = true;
@@ -369,7 +385,7 @@ const loadExportSelectionData = async () => {
   renderExportSelectionModal();
 
   try {
-    const preparedExport = await prepareConversationExportPayload({ updateStatus: false });
+    const preparedExport = await prepareConversationExportPayload({ updateStatus: false, signal: controller.signal });
     if (!exportSelectionState.isOpen || token !== exportSelectionState.loadToken) {
       return;
     }
@@ -423,6 +439,7 @@ const handleExportSelectionAction = async (action) => {
     const config = {
       exportFormat: exportSelectionState.format,
       exportRole: exportSelectionState.roleFilter,
+      exportImages: exportSelectionState.includeImages,
     };
     if (typeof saveToolkitConfig === "function") {
       saveToolkitConfig(config);
@@ -433,6 +450,7 @@ const handleExportSelectionAction = async (action) => {
       selectedTurnIds: Array.from(exportSelectionState.selectedTurnIds),
       roleFilter: exportSelectionState.roleFilter,
       format: exportSelectionState.format,
+      includeImages: exportSelectionState.includeImages,
     });
     if (payload) {
       closeExportSelectionModal();
@@ -471,10 +489,11 @@ const ensureExportSelectionModal = () => {
 
     modal.addEventListener("change", (event) => {
       const target = event.target;
-      if (!(target instanceof HTMLSelectElement)) {
+      if (!(target instanceof HTMLSelectElement) && !(target instanceof HTMLInputElement)) {
         return;
       }
       const field = target.dataset.exportSelectionField;
+      if (field === "images") exportSelectionState.includeImages = target.checked;
       if (field === "scope") {
         exportSelectionState.scope = target.value === EXPORT_SCOPE_SELECTED
           ? EXPORT_SCOPE_SELECTED

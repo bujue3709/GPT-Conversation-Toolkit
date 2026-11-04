@@ -2,6 +2,8 @@
  * ChatGPT Conversation Toolkit - Conversation export
  */
 let exportInProgress = false;
+let exportAbortController = null;
+const cancelConversationExport = () => exportAbortController?.abort();
 
 const prepareConversationExportPayload = async (options = {}) => {
   const updatePreparationStatus = options.updateStatus === false
@@ -25,6 +27,7 @@ const prepareConversationExportPayload = async (options = {}) => {
       const response = await fetchConversationByIdCandidates(conversationIdCandidates, {
         timeoutMs: options.timeoutMs,
         retries: options.retries,
+        signal: options.signal,
       });
       const payload = normalizeConversationApiResponse(response.data, {
         conversationId: response.conversationId || conversationId,
@@ -65,10 +68,12 @@ const exportMessages = async (options = {}) => {
   }
 
   exportInProgress = true;
+  exportAbortController = new AbortController();
   try {
     const preparedExport = options.preparedExport?.payload
       ? options.preparedExport
-      : await prepareConversationExportPayload(options);
+      : await prepareConversationExportPayload({ ...options, signal: exportAbortController.signal });
+    exportAbortController.signal.throwIfAborted();
     const payload = applyExportSelection(preparedExport.payload, {
       scope: options.scope,
       selectedTurnIds: options.selectedTurnIds,
@@ -80,9 +85,16 @@ const exportMessages = async (options = {}) => {
     }
 
     const format = options.format || TOOLKIT_EXPORT_FORMAT;
+    payload.includeImages = options.includeImages ?? TOOLKIT_EXPORT_IMAGES;
+    if (payload.includeImages && payload.messages.some((message) => message.images?.length)) {
+      return await exportConversationImageArchive(payload, {
+        format, signal: exportAbortController.signal, usedFallback: preparedExport.usedFallback,
+      });
+    }
     if (format === TOOLKIT_EXPORT_FORMAT_PNG) {
       await exportConversationPng(payload, {
         usedFallback: preparedExport.usedFallback,
+        signal: exportAbortController.signal,
       });
       return payload;
     }
@@ -95,6 +107,10 @@ const exportMessages = async (options = {}) => {
     );
     return payload;
   } catch (error) {
+    if (error.name === "AbortError" || exportAbortController?.signal.aborted) {
+      updateStatusByKey("exportImages.cancelled", "info");
+      return null;
+    }
     const normalizedError = normalizeExportApiError(error, "Export failed.");
     const failureStatusKey = (options.format || TOOLKIT_EXPORT_FORMAT) === TOOLKIT_EXPORT_FORMAT_PNG
       && typeof getPngExportFailureStatusKey === "function"
@@ -106,5 +122,6 @@ const exportMessages = async (options = {}) => {
     return null;
   } finally {
     exportInProgress = false;
+    exportAbortController = null;
   }
 };

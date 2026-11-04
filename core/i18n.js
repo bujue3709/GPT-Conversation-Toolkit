@@ -13,6 +13,12 @@ const i18nState = {
 
 const I18N_MESSAGES = {
   en: {
+    "exportImages.include": "Include images (offline ZIP with Markdown, JSON and originals)",
+    "exportImages.progress": "Saving image {current} / {total}…",
+    "exportImages.done": "Archive saved with {count} images.",
+    "exportImages.partial": "Archive saved: {count} images, {failed} unavailable, {previews} PNG previews unavailable. See manifest.json.",
+    "exportImages.cancelled": "Export cancelled.",
+    "exportImages.memoryLimit": "This browser's download buffer is limited to 64 MiB. Export fewer turns, or use a browser that supports saving directly to a file.",
     "language.label": "Language",
     "language.auto": "Browser default",
     "language.autoWithLocale": "Browser default ({language})",
@@ -224,6 +230,12 @@ const I18N_MESSAGES = {
     "settings.latexCopyFormat.latexDisplay": "LaTeX display (\\[...\\])",
   },
   "zh-CN": {
+    "exportImages.include": "包含图片（离线 ZIP，含 Markdown、JSON 和原图）",
+    "exportImages.progress": "正在保存图片 {current} / {total}…",
+    "exportImages.done": "归档已保存，包含 {count} 张图片。",
+    "exportImages.partial": "归档已保存：{count} 张图片成功，{failed} 张无法获取，{previews} 张无法在 PNG 中预览。详见 manifest.json。",
+    "exportImages.cancelled": "导出已取消。",
+    "exportImages.memoryLimit": "当前浏览器的下载缓冲上限为 64 MiB。请减少选中回合，或使用支持直接保存到文件的浏览器。",
     "language.label": "语言",
     "language.auto": "跟随浏览器",
     "language.autoWithLocale": "跟随浏览器（{language}）",

@@ -200,6 +200,12 @@ const longPayload = {
   ],
 };
 const longPages = api.paginateConversationForPng(longPayload, measurement.context);
+const tallImagePages = api.paginateConversationForPng({
+  includeImages: true,
+  messages: [{ role: "assistant", text: "Tall image", images: [{ id: "image-1", preview: "available", width: 100, height: 100000, path: "images/tall.png" }] }],
+}, measurement.context);
+assert.ok(tallImagePages.every((page) => page.usedHeight <= api.PNG_EXPORT_PAGE_CAPACITY));
+assert.ok(tallImagePages.flatMap((page) => page.items).flatMap((item) => item.units).some((unit) => unit.type === "image"));
 assert.ok(longPages.length > 2);
 assert.ok(longPages.every((page) => page.usedHeight <= api.PNG_EXPORT_PAGE_CAPACITY));
 const assistantFragments = longPages.flatMap((page) => page.items).filter((item) => item.role === "assistant");

@@ -293,8 +293,12 @@ const fetchJsonWithTimeout = async (url, options = {}) => {
   const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : EXPORT_API_TIMEOUT_MS;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const abortFromCaller = () => controller.abort();
+  options.signal?.addEventListener("abort", abortFromCaller, { once: true });
+  if (options.signal?.aborted) controller.abort();
 
   try {
+    options.signal?.throwIfAborted();
     const authenticatedHeaders = await getAuthenticatedExportApiHeaders(url, options.headers || {});
     const response = await fetch(url, {
       credentials: "include",
@@ -336,6 +340,9 @@ const fetchJsonWithTimeout = async (url, options = {}) => {
       });
     }
   } catch (error) {
+    if (options.signal?.aborted) {
+      throw new ExportApiError("CANCELLED", "Conversation export cancelled.", { fallbackAllowed: false });
+    }
     if (error?.name === "AbortError") {
       throw new ExportApiError("TIMEOUT", "Conversation API request timed out.", {
         fallbackAllowed: true,
@@ -353,6 +360,7 @@ const fetchJsonWithTimeout = async (url, options = {}) => {
     });
   } finally {
     clearTimeout(timeoutId);
+    options.signal?.removeEventListener("abort", abortFromCaller);
   }
 };
 
@@ -371,7 +379,7 @@ const fetchPaginatedConversationById = async (conversationId, options = {}) => {
     try {
       const firstResponse = await fetchJsonWithTimeout(
         getPaginatedConversationApiUrl(origin, conversationId),
-        { timeoutMs: options.timeoutMs },
+        { timeoutMs: options.timeoutMs, signal: options.signal },
       );
       const firstData = firstResponse.data;
       if (!Array.isArray(firstData?.messages)) {
@@ -399,7 +407,7 @@ const fetchPaginatedConversationById = async (conversationId, options = {}) => {
 
         const pageResponse = await fetchJsonWithTimeout(
           getPaginatedConversationApiUrl(origin, conversationId, cursor),
-          { timeoutMs: options.timeoutMs },
+          { timeoutMs: options.timeoutMs, signal: options.signal },
         );
         if (!Array.isArray(pageResponse.data?.messages)) {
           throw new ExportApiError(
@@ -480,6 +488,7 @@ const fetchConversationById = async (conversationId, options = {}) => {
       try {
         const response = await fetchJsonWithTimeout(url, {
           timeoutMs: options.timeoutMs,
+          signal: options.signal,
         });
         if (!response.data || typeof response.data !== "object") {
           throw new ExportApiError("INVALID_RESPONSE", "Conversation API returned an empty response.", {

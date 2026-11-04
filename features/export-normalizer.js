@@ -72,6 +72,10 @@ const normalizeExportMessage = (message, index) => {
     role: typeof message?.role === "string" && message.role ? message.role : "unknown",
     text: normalizeExportMessageText(message?.text || ""),
   };
+  if (message?.images?.length) {
+    normalized.images = message.images.map(cloneExportImage);
+    normalized.content = (message.content || []).map((part) => ({ ...part }));
+  }
 
   const attachments = Array.isArray(message?.attachments)
     ? message.attachments
@@ -98,7 +102,7 @@ const normalizeExportMessages = (messages) => {
   const normalizedMessages = [];
   (Array.isArray(messages) ? messages : []).forEach((message, index) => {
     const normalized = normalizeExportMessage(message, index);
-    if (!normalized.text && !(Array.isArray(normalized.attachments) && normalized.attachments.length > 0)) {
+    if (!normalized.text && !normalized.images?.length && !(Array.isArray(normalized.attachments) && normalized.attachments.length > 0)) {
       return;
     }
     normalized.index = normalizedMessages.length + 1;
@@ -149,6 +153,8 @@ const cloneExportMessageForSelection = (message, index, sourceIndex, includeSour
   if (includeSourceIndex) {
     cloned.sourceIndex = sourceIndex;
   }
+  if (message?.images) cloned.images = message.images.map(cloneExportImage);
+  if (message?.content) cloned.content = message.content.map((part) => ({ ...part }));
   if (typeof message?.__markdown === "string") {
     Object.defineProperty(cloned, "__markdown", {
       configurable: true,
@@ -456,15 +462,17 @@ const normalizeApiMessage = (node, index, conversationModel) => {
   }
 
   const role = message?.author?.role || "unknown";
-  if (isApiToolCallMessage(message)) {
+  const media = collectExportImageContent(message);
+  const isToolImage = role === "tool" && media.images.length > 0 && !message.metadata?.is_visually_hidden_from_conversation;
+  if (!isToolImage && isApiToolCallMessage(message)) {
     return null;
   }
 
   const parts = extractApiMessageParts(message);
-  const markdown = parts.map((part) => part.text || "").filter(Boolean).join("\n\n");
+  const markdown = isToolImage ? "" : parts.map((part) => part.text || "").filter(Boolean).join("\n\n");
   const text = markdown.trim();
   const attachments = extractApiAttachments(message);
-  if (!shouldKeepApiMessage(role, text, parts, attachments)) {
+  if (!isToolImage && !shouldKeepApiMessage(role, text, parts, attachments)) {
     return null;
   }
 
@@ -480,7 +488,7 @@ const normalizeApiMessage = (node, index, conversationModel) => {
     index,
     id: message.id || node?.id || "",
     parentId: node?.parent || "",
-    role,
+    role: isToolImage ? "assistant" : role,
     authorName: message?.author?.name || "",
     createTime: normalizeExportTimestamp(message.create_time),
     updateTime: normalizeExportTimestamp(message.update_time),
@@ -494,6 +502,8 @@ const normalizeApiMessage = (node, index, conversationModel) => {
     parts,
     attachments,
     metadata,
+    images: media.images,
+    content: isToolImage ? media.content.filter((part) => part.type === "image") : media.content,
   };
 };
 
