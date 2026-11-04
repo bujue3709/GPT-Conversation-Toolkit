@@ -276,27 +276,22 @@ const loadConversationIndex = async (options = {}) => {
 
 const getConversationIndex = (options = {}) => loadConversationIndex(options);
 
-const scheduleConversationIndexRefresh = (options = {}) => {
-  if (conversationIndexRefreshTimer) {
-    clearTimeout(conversationIndexRefreshTimer);
-  }
-
+// Capture events already contain a response; never start another request from
+// a passive observer, including when that response is incomplete.
+const scheduleConversationIndexRefresh = () => {
+  clearTimeout(conversationIndexRefreshTimer);
   conversationIndexRefreshTimer = setTimeout(() => {
     conversationIndexRefreshTimer = null;
-    loadConversationIndex({ ...options, force: true })
-      .then(() => {
-        if (timelineState.visible && typeof scheduleTimelineRefresh === "function") {
-          scheduleTimelineRefresh();
-        }
-        if (state.searchQuery && typeof performSearch === "function") {
-          performSearch(state.searchQuery);
-        }
-      })
-      .catch(() => {
-        if (timelineState.visible && typeof scheduleTimelineRefresh === "function") {
-          scheduleTimelineRefresh();
-        }
-      });
+    const captured = typeof getCapturedConversationApiResponse === "function"
+      ? getCapturedConversationApiResponse(getConversationIndexIdCandidates()) : null;
+    if (!captured?.data || !isCompleteConversationMapping(captured.data)) return;
+    try {
+      const next = buildConversationIndexFromApiResponse(captured.data, { conversationId: captured.conversationId || getCurrentConversationIndexId() });
+      conversationIndexState.activeToken += 1;
+      conversationIndexState.loadingPromise = null;
+      applyConversationIndex(next);
+      if (timelineState.visible) scheduleTimelineRefresh();
+    } catch {}
   }, CONVERSATION_INDEX_CAPTURE_REFRESH_DELAY_MS);
 };
 

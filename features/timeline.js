@@ -159,63 +159,51 @@ const getTimelineJumpTarget = (item) => {
   };
 };
 
+let timelineSourceCache = { signature: "", sources: [] };
 const getTimelineSourceNodes = () => {
-  const conversationIndex =
-    typeof getReadyConversationIndex === "function" ? getReadyConversationIndex() : null;
-  if (conversationIndex?.userMessages?.length) {
-    return conversationIndex.userMessages;
-  }
-  if (
-    typeof loadConversationIndex === "function" &&
-    !(
-      conversationIndexState.status === "failed" &&
-      typeof isConversationIndexForCurrentConversation === "function" &&
-      isConversationIndexForCurrentConversation()
-    )
-  ) {
-    loadConversationIndex()
-      .then(() => {
-        if (timelineState.visible) {
-          scheduleTimelineRefresh();
-        }
-      })
-      .catch(() => {});
-  }
-
-  const sourceItems =
-    typeof getConversationMessageEntries === "function"
-      ? getConversationMessageEntries({
-          role: "user",
-          mode: TOOLKIT_MESSAGE_MODE_EXTENDED,
-          refreshDom: true,
-        })
-      : typeof getCachedMessageEntries === "function"
-        ? getCachedMessageEntries({ role: "user", mode: TOOLKIT_MESSAGE_MODE_EXTENDED })
-        : getUserMessageNodes();
-  const fallbackItems =
-    sourceItems.length > 0
-      ? sourceItems
-      : typeof getConversationMessageEntries === "function"
-        ? getConversationMessageEntries({
-            mode: TOOLKIT_MESSAGE_MODE_EXTENDED,
-            refreshDom: false,
-          })
-        : typeof getCachedMessageEntries === "function"
-          ? getCachedMessageEntries({ mode: TOOLKIT_MESSAGE_MODE_EXTENDED })
-          : getMessageNodes();
-  const uniqueItems = [];
-  const seenKeys = new Set();
-
-  fallbackItems.forEach((source, index) => {
-    const key = getTimelineSourceKey(source, index);
-    if (!key || seenKeys.has(key)) {
-      return;
+  const index = typeof getReadyConversationIndex === "function" ? getReadyConversationIndex() : null;
+  const signature = [state.conversationKey, state.messageCacheRevision, index?.version, index?.loadedAt].join(":");
+  if (signature === timelineSourceCache.signature) return timelineSourceCache.sources;
+  const live = typeof getConversationMessageEntries === "function"
+    ? getConversationMessageEntries({ role: "user", mode: TOOLKIT_MESSAGE_MODE_LOADED, refreshDom: false })
+    : getUserMessageNodes().map(node => ({node, role:"user", text:extractMessageText(node)}));
+  const idsFor = source => typeof getDomMessageIdCandidates === "function" && source.node instanceof HTMLElement
+    ? getDomMessageIdCandidates(source.node) : [];
+  let sources = [];
+  timelineState.countPartial = !index;
+  if (index) {
+    const sameIndex = timelineSourceCache.indexStamp === `${index.version}:${index.loadedAt}` && timelineSourceCache.conversationKey === state.conversationKey && !timelineSourceCache.partial;
+    sources = sameIndex ? timelineSourceCache.sources.slice() : index.userMessages.slice();
+    const positions = new Map(sources.map((source, position) => [source.messageId, position]));
+    let anchor = -1;
+    let divergent = false;
+    for (const entry of live) {
+      const ids = idsFor(entry);
+      const known = ids.find(id => positions.has(id));
+      if (known) { anchor = positions.get(known); continue; }
+      // Only extend a complete index past its last known user turn. A changed
+      // branch must not be appended to stale messages from the old branch.
+      if (anchor !== sources.length - 1 || anchor < 0 || !ids.length) { divergent = true; break; }
+      const messageId = ids[0];
+      sources.push({ ...entry, key: "live:" + messageId, messageId, userOrder: sources.length + 1 });
+      positions.set(messageId, sources.length - 1);
+      anchor = sources.length - 1;
     }
-    seenKeys.add(key);
-    uniqueItems.push(source);
-  });
-
-  return uniqueItems;
+    if (divergent) { sources = live; timelineState.countPartial = true; }
+  } else {
+    sources = live;
+    if (typeof loadConversationIndex === "function" && conversationIndexState.status !== "loading" && conversationIndexState.status !== "failed") {
+      loadConversationIndex().then(() => { if (timelineState.visible) scheduleTimelineRefresh(); }).catch(() => {});
+    }
+  }
+  const seen = new Set();
+  sources = sources.filter(source => {
+    const key = source.messageId || idsFor(source)[0] || source.key || source.node;
+    if (seen.has(key)) return false;
+    seen.add(key); return true;
+  }).map((source, i) => ({ ...source, userOrder: i + 1, order: i + 1, messageId: source.messageId || idsFor(source)[0] || "" }));
+  timelineSourceCache = { signature, sources, indexStamp: index ? `${index.version}:${index.loadedAt}` : null, conversationKey: state.conversationKey, partial: timelineState.countPartial };
+  return sources;
 };
 
 const normalizeTimelineText = (text) => (text || "").replace(/\s+/g, " ").trim();
@@ -770,7 +758,7 @@ const queueTimelineNodeResolveAfterJump = (index, options = {}) => {
         return;
       }
 
-      const liveNode = getTimelineSourceNode(item.source);
+      const liveNode = getTimelineSourceNode(item.source, { resolve: false });
       if (liveNode instanceof HTMLElement && liveNode.isConnected) {
         item.node = liveNode;
         if (typeof scrollElementIntoConversationView === "function") {
@@ -1125,16 +1113,20 @@ const refreshTimelineItemViewportCache = (items, viewport = null) => {
 
   const metrics = viewport || getTimelineViewportMetrics();
   let measured = false;
+  const nodesById = new Map();
+  document.querySelectorAll("[data-message-author-role], [data-message-id], [data-chatgpt-selection-message-id]").forEach(node => {
+    const root = typeof normalizeMessageNode === "function" ? normalizeMessageNode(node) : node;
+    if (!(root instanceof HTMLElement)) return;
+    if (typeof getDomMessageIdCandidates === "function") for (const id of getDomMessageIdCandidates(root)) nodesById.set(id, root);
+  });
 
   safeItems.forEach((item) => {
-    const liveNode =
-      item?.node instanceof HTMLElement && item.node.isConnected
-        ? item.node
-        : getTimelineSourceNode(item?.source);
+    const liveNode = item.messageId ? nodesById.get(item.messageId) : getTimelineSourceNode(item?.source, { resolve: false });
     if (liveNode instanceof HTMLElement && liveNode.isConnected) {
       item.node = liveNode;
     }
 
+    if (!(liveNode instanceof HTMLElement)) item.node = null;
     const bounds = getTimelineItemViewportBounds(liveNode, metrics);
     if (!bounds) {
       item.viewportTop = Number.NaN;
@@ -1199,6 +1191,10 @@ const syncTimelineActiveFromViewport = () => {
   }
 
   const viewport = getTimelineViewportMetrics();
+  if (Date.now() - (timelineState.viewportMeasuredAt || 0) >= 100) {
+    refreshTimelineItemViewportCache(timelineState.items, viewport);
+    timelineState.viewportMeasuredAt = Date.now();
+  }
   let nextIndex = resolveTimelineNearestIndexFromCache(viewport);
   if (nextIndex < 0) {
     const measured = refreshTimelineItemViewportCache(timelineState.items, viewport);
@@ -1819,7 +1815,8 @@ const updateTimelineCount = (currentNodeOrder, totalCount) => {
   }
   const current = Number.isFinite(currentNodeOrder) ? Math.max(0, Math.trunc(currentNodeOrder)) : 0;
   const total = Number.isFinite(totalCount) ? Math.max(0, Math.trunc(totalCount)) : 0;
-  count.textContent = `${current}/${total}`;
+  count.textContent = `${current}/${total}${timelineState.countPartial ? "+" : ""}`;
+  count.title = t(timelineState.countPartial ? "timeline.partialCount" : "timeline.fullCount");
   count.setAttribute("aria-label", t("timeline.countAria", { current, total }));
 };
 

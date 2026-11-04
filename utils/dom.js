@@ -409,7 +409,7 @@ const syncMessageCacheFromNodes = (nodes) => {
       return;
     }
 
-    const text = extractMessageText(node);
+    const text = extractMessageText(node) || (node.querySelector("img") ? "[Image]" : "");
     if (!text) {
       return;
     }

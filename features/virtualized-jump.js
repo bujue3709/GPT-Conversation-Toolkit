@@ -455,7 +455,7 @@ const queryMessageNodeById = (messageId) => {
       candidate.getAttribute("data-turn-id") ||
       candidate.getAttribute("data-turn-id-container") ||
       "";
-    if (value === messageId) {
+    if (getDomMessageIdCandidates(candidate).includes(messageId)) {
       return getVirtualJumpMessageRoot(candidate);
     }
   }
@@ -582,17 +582,11 @@ const isDomNodeLikelyJumpTarget = (node, target, options = {}) => {
   if (messageId) {
     const domIds = getDomMessageIdCandidates(node);
     if (domIds.includes(messageId)) {
-      return true;
+      return isVirtualJumpNodeRoleCompatible(node, target);
     }
 
-    const message = resolveDomNodeConversationMessage(node);
-    if (
-      message?.messageId === messageId ||
-      message?.id === messageId ||
-      message?.key === messageId
-    ) {
-      return true;
-    }
+    // Known identity never falls back to similar text or a recycled row index.
+    return false;
   }
 
   const targetIndex = getVirtualJumpTargetIndex(target);
@@ -694,6 +688,7 @@ const resolveMessageDomNode = (target, options = {}) => {
     return null;
   }
 
+  if (messageId) return null;
   const weakNode = resolveByPreviewText(target);
   if (weakNode instanceof HTMLElement && weakNode.isConnected) {
     rememberResolvedJumpNode(target, weakNode);
@@ -1149,7 +1144,7 @@ const jumpToConversationMessage = async (target, options = {}) => {
       node.scrollIntoView({ behavior: options.finalBehavior || "auto", block: options.block || "center" });
     }
     await nextVirtualJumpFrame();
-    if (!isActive() || !isVirtualJumpNodeCentered(node)) {
+    if (!isActive() || !isVirtualJumpNodeCentered(node) || !isDomNodeLikelyJumpTarget(node, normalizedTarget, { allowWeak: false })) {
       return false;
     }
     options.onResolved?.(node, {

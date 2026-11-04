@@ -407,6 +407,50 @@ const conversation = {
     assert(compatibility.restored);
     assert(compatibility.timelineVisible);
     assert(compatibility.promptRoundTrip);
+    const timelineRegression = await extension(async () => {
+      await loadConversationIndex();
+      getMessageNodes({forceRefresh:true});
+      const before = getTimelineSourceNodes().length;
+      const extra = document.createElement("article");
+      extra.setAttribute("data-message-id", "user-new");
+      extra.setAttribute("data-message-author-role", "user");
+      extra.innerHTML = '<img alt="image-only user turn" src="https://fixture-images.example/new.png">';
+      document.querySelector("main").append(extra);
+      getMessageNodes({forceRefresh:true});
+      const after = getTimelineSourceNodes().length;
+      const exact = resolveMessageDomNode({messageId:"user-new",role:"user"});
+      extra.remove();
+      getMessageNodes({forceRefresh:true});
+      const afterUnmount = getTimelineSourceNodes().length;
+      document.querySelector("main").append(extra);
+      extra.setAttribute("data-message-id", "recycled-other");
+      const recycledRejected = !isDomNodeLikelyJumpTarget(extra, {messageId:"user-new",role:"user",index:1,text:"same text"}, {allowWeak:false});
+      const missingRejected = resolveMessageDomNode({messageId:"not-present",role:"user",text:"user-1 fixture text"}) === null;
+      const items = Array.from({length:5000}, (_,i) => ({messageId:i===0?"user-1":"missing-"+i, source:{messageId:"missing-"+i}}));
+      let scans = 0;
+      const metrics = getTimelineViewportMetrics();
+      const originalQuery = document.querySelectorAll;
+      document.querySelectorAll = function(...args) { scans++; return originalQuery.apply(this,args); };
+      const start = performance.now();
+      refreshTimelineItemViewportCache(items, metrics);
+      const measureMs = performance.now()-start;
+      document.querySelectorAll = originalQuery;
+      extra.remove();
+      getMessageNodes({forceRefresh:true});
+      let passiveRequests = 0;
+      const originalFetch = window.fetch;
+      window.fetch = (...args) => { passiveRequests++; return originalFetch(...args); };
+      scheduleConversationIndexRefresh();
+      await new Promise(resolve => setTimeout(resolve,450));
+      window.fetch = originalFetch;
+      return {before,after,afterUnmount,exact:exact===extra,recycledRejected,missingRejected,scans,measureMs,passiveRequests};
+    });
+    assert.equal(timelineRegression.before,2);
+    assert.equal(timelineRegression.after,3);
+    assert.equal(timelineRegression.afterUnmount,3);
+    assert(timelineRegression.exact && timelineRegression.recycledRejected && timelineRegression.missingRejected);
+    assert.equal(timelineRegression.scans,1);
+    assert.equal(timelineRegression.passiveRequests,0);
     // Cancel a real export while its image fetch is pending; no download occurs.
     let releaseImage, imageStarted;
     const started = new Promise((resolve) => (imageStarted = resolve));
@@ -507,6 +551,7 @@ const conversation = {
       partialFailureReported: true,
       cancellationPassed: true,
       compatibility,
+      timelineRegression,
       repeated: { ...repeated, heapBefore, heapAfter },
       errors,
     };
