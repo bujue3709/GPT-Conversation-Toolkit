@@ -354,3 +354,43 @@ test("image resolver uses same-origin auth and does not send bearer tokens to im
   assert.equal(calls[1].options.headers, undefined);
   assert.equal(calls[1].options.credentials, "omit");
 });
+
+test("conversation access denial stops alternate endpoints and retries", async () => {
+  for (const status of [401, 403, 429]) {
+    let requests = 0;
+    const ctx = vm.createContext({ URL, AbortController, setTimeout, clearTimeout,
+      normalizeStrictConversationId: value => value,
+      window: { location: { origin: "https://chatgpt.com", hostname: "chatgpt.com" } },
+      fetch: async url => {
+        if (String(url).includes('/api/auth/session')) return new Response(JSON.stringify({accessToken:'fixture'}));
+        requests++; return new Response('blocked', {status});
+      }
+    });
+    vm.runInContext(source('features/conversation-api.js'), ctx);
+    await assert.rejects(vm.runInContext("fetchConversationById('fixture')",ctx), error => error.code === 'ACCESS_BLOCKED' && error.fallbackAllowed === false);
+    assert.equal(requests, 1);
+  }
+});
+
+test("blocked image access stops later requests but preserves selected text in partial ZIP", async () => {
+  let requests = 0, download;
+  const {run} = setup({
+    fetch: async () => { requests++; return new Response('blocked', { status: 403 }); },
+    buildConversationExportFilename: () => 'test.zip',
+    updateStatusByKey: () => {},
+    downloadExportFile: value => { download = value.content; },
+  });
+  await run(`exportConversationImageArchive({includeImages:true,messages:[{index:1,role:'assistant',text:'Keep this text',images:[makeExportImage('https://example.test/a.png'),makeExportImage('https://example.test/b.png')]}]}, {format:'md'})`);
+  assert.equal(requests, 1);
+  const files = fflate.unzipSync(new Uint8Array(await download.arrayBuffer()));
+  assert(files['conversation.md']);
+  assert(!files['conversation.json']);
+  assert.match(new TextDecoder().decode(files['conversation.md']), /Keep this text/);
+  assert.equal(JSON.parse(new TextDecoder().decode(files['manifest.json'])).failedImageCount, 2);
+});
+
+test("explicit Cloudflare challenge stops image access without reading HTML", () => {
+  const {ctx, run} = setup();
+  ctx.response = new Response('challenge', {headers:{'cf-mitigated':'challenge'}});
+  assert.throws(() => run('checkExportImageAccess(response)'), error => error.stopImageRequests === true);
+});

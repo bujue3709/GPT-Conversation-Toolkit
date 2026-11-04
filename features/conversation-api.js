@@ -230,6 +230,11 @@ const getExportApiAccessToken = async (options = {}) => {
         },
         signal: controller.signal,
       });
+      if ([401, 403, 429].includes(response.status) || response.headers.get("cf-mitigated") === "challenge") {
+        throw new ExportApiError("ACCESS_BLOCKED", `Conversation access blocked (HTTP ${response.status}). Check ChatGPT access and retry later.`, {
+          status: response.status, fallbackAllowed: false, url: sessionUrl,
+        });
+      }
       if (!response.ok) {
         throw new ExportApiError(
           "AUTH_SESSION",
@@ -283,6 +288,7 @@ const getAuthenticatedExportApiHeaders = async (url, headers = {}) => {
     const accessToken = await getExportApiAccessToken();
     normalizedHeaders.Authorization = `Bearer ${accessToken}`;
   } catch (error) {
+    if (error.code === "ACCESS_BLOCKED") throw error;
     // Keep the cookie-only request as a compatibility fallback. The resulting
     // HTTP error is more useful than failing before the conversation request.
   }
@@ -311,6 +317,11 @@ const fetchJsonWithTimeout = async (url, options = {}) => {
       signal: controller.signal,
     });
 
+    if ([401, 403, 429].includes(response.status) || response.headers.get("cf-mitigated") === "challenge") {
+      throw new ExportApiError("ACCESS_BLOCKED", `Conversation access blocked (HTTP ${response.status}). Check ChatGPT access and retry later.`, {
+        status: response.status, fallbackAllowed: false, url,
+      });
+    }
     if (!response.ok) {
       const code =
         response.status === 401 || response.status === 403

@@ -154,6 +154,9 @@ const exportConversationImageArchive = async (payload, options = {}) => {
   let store;
   const assets = new Map();
   const images = payload.messages.flatMap((message) => message.images || []);
+  const total = new Set(images.map(image => image.source)).size;
+  const startedAt = Date.now();
+  let blocked = null;
   try {
     if (options.format === "png") store = await createExportPreviewStore();
     for (let index = 0; index < images.length; index++) {
@@ -168,11 +171,14 @@ const exportConversationImageArchive = async (payload, options = {}) => {
         Object.assign(image, previous);
         continue;
       }
+      options.onProgress?.({ completed: assets.size, total, startedAt });
       let blob;
       try {
+        if (blocked) throw blocked;
         blob = await fetchExportImage(image, payload, signal);
       } catch (error) {
         throwIfExportAborted(signal);
+        if (error.stopImageRequests) blocked = error;
         const failed = {
           status: "failed",
           error:
@@ -207,6 +213,7 @@ const exportConversationImageArchive = async (payload, options = {}) => {
       assets.set(image.source, saved);
       Object.assign(image, saved);
     }
+    options.onProgress?.(null);
     if (options.format === "png") {
       Object.defineProperty(payload, "__imageStore", {
         configurable: true,
@@ -222,20 +229,12 @@ const exportConversationImageArchive = async (payload, options = {}) => {
           ),
       });
     }
-    // Include a readable and a structured copy in every image archive.
-    await zip.add(
-      "conversation.md",
-      new Blob([formatConversationExportMarkdown(payload)]),
-    );
-    await zip.add(
-      "conversation.json",
-      new Blob([formatConversationExportJson(payload)]),
-    );
-    if (options.format === "txt")
-      await zip.add(
-        "conversation.txt",
-        new Blob([formatConversationExportText(payload)]),
-      );
+    // Preserve the selected format; images and the manifest accompany it.
+    const formats = { md: formatConversationExportMarkdown, json: formatConversationExportJson, txt: formatConversationExportText };
+    if (options.format !== "png") {
+      const format = formats[options.format] ? options.format : "json";
+      await zip.add(`conversation.${format}`, new Blob([formats[format](payload)]));
+    }
     const failed = images.filter((image) => image.status !== "saved");
     const previewUnavailable =
       options.format === "png"
@@ -277,6 +276,7 @@ const exportConversationImageArchive = async (payload, options = {}) => {
     await zip.abort().catch(() => {});
     throw error;
   } finally {
+    options.onProgress?.(null);
     delete payload.__imageStore;
     assets.clear();
     await store?.close();

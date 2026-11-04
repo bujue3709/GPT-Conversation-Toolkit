@@ -13,11 +13,14 @@ const i18nState = {
 
 const I18N_MESSAGES = {
   en: {
+    "exportImages.estimate": "Image stage: roughly {seconds}s remaining, estimated from completed downloads; may change with network speed. PNG rendering and packaging follow.",
+    "exportImages.estimating": "Estimating remaining image-download time…",
+    "exportImages.blocked": "Image requests stopped (HTTP {status} / verification or rate limit). Retry later after checking ChatGPT access.",
     "exportImages.running": "Exporting…",
     "exportImages.elapsed": "Elapsed: {seconds}s. Images download sequentially (up to 30s each); cancel to stop.",
     "exportImages.label": "Image export",
     "exportImages.textOnly": "Do not download images (keep selected file format)",
-    "exportImages.include": "Include images (offline ZIP with Markdown, JSON and originals)",
+    "exportImages.include": "Include images (ZIP with selected format and originals)",
     "exportImages.progress": "Saving image {current} / {total}…",
     "exportImages.done": "Archive saved with {count} images.",
     "exportImages.partial": "Archive saved: {count} images, {failed} unavailable, {previews} PNG previews unavailable. See manifest.json.",
@@ -234,11 +237,14 @@ const I18N_MESSAGES = {
     "settings.latexCopyFormat.latexDisplay": "LaTeX display (\\[...\\])",
   },
   "zh-CN": {
+    "exportImages.estimate": "图片下载阶段预计还需约 {seconds} 秒（按已完成速度估算，随网络变化；之后还需渲染或打包）。",
+    "exportImages.estimating": "正在估算图片下载剩余时间…",
+    "exportImages.blocked": "图片请求已停止（HTTP {status}／验证或限流），请确认 ChatGPT 可正常访问后稍后重试。",
     "exportImages.running": "正在导出…",
     "exportImages.elapsed": "已用时 {seconds} 秒。图片逐张下载，每张最多等待 30 秒；可点击取消停止。",
     "exportImages.label": "图片导出",
     "exportImages.textOnly": "不下载图片（按所选文件格式导出）",
-    "exportImages.include": "包含图片（离线 ZIP，含 Markdown、JSON 和原图）",
+    "exportImages.include": "包含图片（ZIP，含所选格式和原图）",
     "exportImages.progress": "正在保存图片 {current} / {total}…",
     "exportImages.done": "归档已保存，包含 {count} 张图片。",
     "exportImages.partial": "归档已保存：{count} 张图片成功，{failed} 张无法获取，{previews} 张无法在 PNG 中预览。详见 manifest.json。",

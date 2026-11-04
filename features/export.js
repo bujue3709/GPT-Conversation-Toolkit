@@ -91,6 +91,7 @@ const exportMessages = async (options = {}) => {
     if (payload.includeImages && payload.messages.some((message) => message.images?.length)) {
       return await exportConversationImageArchive(payload, {
         format, signal: exportAbortController.signal, usedFallback: preparedExport.usedFallback,
+        onProgress: typeof setExportSelectionImageProgress === "function" ? setExportSelectionImageProgress : undefined,
       });
     }
     if (format === TOOLKIT_EXPORT_FORMAT_PNG) {

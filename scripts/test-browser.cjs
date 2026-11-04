@@ -256,11 +256,25 @@ const conversation = {
     assert.equal(manifest.completeness, "complete");
     assert.deepEqual(Buffer.from(files["images/image-0001.png"]), imageBytes);
     assert.deepEqual(Buffer.from(files["images/image-0002.png"]), imageBytes);
-    const md = Buffer.from(files["conversation.md"]).toString();
-    assert.match(md, /!\[Image\]\(images\/image-0001.png\)/);
-    assert(!md.includes("hidden tool text"));
-    const json = Buffer.from(files["conversation.json"]).toString();
-    assert(!json.includes("fixture-signature"));
+    assert(!files["conversation.md"] && !files["conversation.json"] && !files["conversation.txt"]);
+    for (const format of ["md", "json", "txt"]) {
+      const promise = page.waitForEvent("download");
+      await extension(async (format) => {
+        const prepared = await prepareConversationExportPayload({ updateStatus: false });
+        await exportMessages({ preparedExport: prepared, format, includeImages: true });
+      }, format);
+      const result = await promise;
+      const destination = path.join(output, format + "-images.zip");
+      await result.saveAs(destination);
+      const archive = fflate.unzipSync(fs.readFileSync(destination));
+      assert(archive["conversation." + format]);
+      for (const other of ["md", "json", "txt"].filter(value => value !== format)) assert(!archive["conversation." + other]);
+      assert(!Object.keys(archive).some(name => name.startsWith("pages/")));
+      const text = Buffer.from(archive["conversation." + format]).toString();
+      assert(!text.includes("fixture-signature"));
+      assert(!text.includes("hidden tool text"));
+      if (format === "md") assert.match(text, /images\/image-0001.png/);
+    }
     const pngName = Object.keys(files).find((name) =>
       name.startsWith("pages/"),
     );

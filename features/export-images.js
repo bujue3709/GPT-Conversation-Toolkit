@@ -202,7 +202,16 @@ const throwIfExportAborted = (signal) => {
   if (signal?.aborted) throw new DOMException("Export cancelled", "AbortError");
 };
 
+const checkExportImageAccess = (response) => {
+  if ([401, 403, 429].includes(response.status) || response.headers.get("cf-mitigated") === "challenge") {
+    const error = new Error(t("exportImages.blocked", { status: response.status }));
+    error.stopImageRequests = true;
+    throw error;
+  }
+};
+
 const readExportImageResponse = async (response, signal) => {
+  checkExportImageAccess(response);
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const type = (response.headers.get("content-type") || "")
     .split(";")[0]
@@ -284,6 +293,7 @@ const resolveExportImageUrl = async (image, payload, signal) => {
     credentials: "include",
     signal,
   });
+  checkExportImageAccess(response);
   if (!response.ok) throw new Error(`Image resolver HTTP ${response.status}`);
   const data = await response.json();
   const url = new URL(data.download_url || "");
@@ -309,6 +319,9 @@ const fetchExportImage = async (image, payload, signal) => {
           : "omit",
     });
     return await readExportImageResponse(response, controller.signal);
+  } catch (error) {
+    if (error.code === "ACCESS_BLOCKED") error.stopImageRequests = true;
+    throw error;
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener("abort", abort);

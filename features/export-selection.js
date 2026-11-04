@@ -22,6 +22,10 @@ const exportSelectionState = {
   preparationController: null,
 };
 
+let exportSelectionImageProgress = null;
+const setExportSelectionImageProgress = (progress) => {
+  exportSelectionImageProgress = progress && { ...progress, estimateAt: Date.now(), remainingMs: progress.completed > 0 ? (Date.now() - progress.startedAt) / progress.completed * (progress.total - progress.completed) : null };
+};
 let exportSelectionProgressTimer = null;
 let exportSelectionProgressStarted = 0;
 const updateExportSelectionProgress = (message, tone = "info") => {
@@ -468,11 +472,21 @@ const handleExportSelectionAction = async (action) => {
     return;
   } else if (action === "export") {
     if (exportInProgress) return;
+    exportSelectionImageProgress = null;
     exportSelectionProgressStarted = Date.now();
     clearInterval(exportSelectionProgressTimer);
     exportSelectionProgressTimer = setInterval(() => {
       const elapsed = getExportSelectionModal()?.querySelector("[data-export-selection-elapsed]");
-      if (elapsed) elapsed.textContent = t("exportImages.elapsed", { seconds: Math.floor((Date.now() - exportSelectionProgressStarted) / 1000) });
+      if (elapsed) {
+        const progress = exportSelectionImageProgress;
+        let estimate = "";
+        if (progress) {
+          estimate = progress.completed > 0
+            ? t("exportImages.estimate", { seconds: Math.max(1, Math.ceil((progress.remainingMs - (Date.now() - progress.estimateAt)) / 1000)) })
+            : t("exportImages.estimating");
+        }
+        elapsed.textContent = t("exportImages.elapsed", { seconds: Math.floor((Date.now() - exportSelectionProgressStarted) / 1000) }) + " " + estimate;
+      }
     }, 1000);
     const config = {
       exportFormat: exportSelectionState.format,
