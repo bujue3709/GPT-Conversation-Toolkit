@@ -773,10 +773,9 @@ const getElementReadableText = (element) => {
   if (!(element instanceof HTMLElement)) {
     return "";
   }
-  const clone = element.cloneNode(true);
-  clone
-    .querySelectorAll(
-      [
+  // Reading text must not clone resource elements: even detached image clones
+  // can trigger loads and flood the browser's extension activity log.
+  const excludedSelector = [
         "button",
         "script",
         "style",
@@ -791,10 +790,20 @@ const getElementReadableText = (element) => {
         `#${MINIMIZED_ID}`,
         `#${TIMELINE_ID}`,
         `#${PROMPT_MODAL_ID}`,
-      ].join(", "),
-    )
-    .forEach((child) => child.remove());
-  return (clone.textContent || "").trim();
+      ].join(", ");
+  const walker = element.ownerDocument.createTreeWalker(
+    element,
+    NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+    {
+      acceptNode(node) {
+        if (node.nodeType === Node.TEXT_NODE) return NodeFilter.FILTER_ACCEPT;
+        return node.matches(excludedSelector) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_SKIP;
+      },
+    },
+  );
+  const text = [];
+  while (walker.nextNode()) text.push(walker.currentNode.nodeValue || "");
+  return text.join("").trim();
 };
 
 const extractMessageText = (node) => {

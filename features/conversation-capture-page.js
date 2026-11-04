@@ -25,17 +25,13 @@
   };
 
   const shouldInspectResponse = (url, response) => {
-    const textUrl = String(url || "");
-    if (
-      textUrl.includes("/backend-api/") ||
-      textUrl.includes("/conversation") ||
-      textUrl.includes("conversation")
-    ) {
-      return true;
-    }
-
     const contentType = response?.headers?.get?.("content-type") || "";
-    return contentType.includes("application/json");
+    try {
+      const parsed = new URL(String(url || ""), window.location.href);
+      return parsed.origin === window.location.origin &&
+        /^\/backend-api\/conversations?\/[A-Za-z0-9._~-]+(?:\/messages)?$/.test(parsed.pathname) &&
+        contentType.toLowerCase().includes("application/json");
+    } catch { return false; }
   };
 
   const parseMaybeJson = (text) => {
@@ -67,21 +63,38 @@
     );
   };
 
-  const inspectFetchResponse = (url, response) => {
-    if (!response || !shouldInspectResponse(url, response)) {
+  let captureInProgress = false;
+  const inspectFetchResponse = async (url, response) => {
+    if (captureInProgress || !response || !shouldInspectResponse(url, response)) {
       return;
     }
-
-    response
-      .clone()
-      .text()
-      .then((text) => {
-        const data = parseMaybeJson(text);
-        if (data) {
-          postConversationData(data, url);
-        }
-      })
-      .catch(() => {});
+    if (Number(response.headers.get("content-length")) > MAX_CAPTURE_TEXT_LENGTH) return;
+    captureInProgress = true;
+    let reader;
+    let complete = false;
+    try {
+      reader = response.clone().body?.getReader();
+      if (!reader) return;
+      const decoder = new TextDecoder();
+      const pieces = [];
+      let bytes = 0;
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) { complete = true; break; }
+        bytes += value.byteLength;
+        if (bytes > MAX_CAPTURE_TEXT_LENGTH) return;
+        pieces.push(decoder.decode(value, { stream: true }));
+      }
+      pieces.push(decoder.decode());
+      const data = parseMaybeJson(pieces.join(""));
+      if (data) postConversationData(data, url);
+    } catch {} finally {
+      // Cancelling a tee branch can wait for the original response consumer.
+      // Do not await it or cancel ChatGPT's original response.
+      if (reader && !complete) reader.cancel().catch(() => {});
+      reader?.releaseLock();
+      captureInProgress = false;
+    }
   };
 
   const originalFetch = window.fetch;
@@ -110,7 +123,7 @@
     OriginalXHR.prototype.send = function patchedSend(...args) {
       this.addEventListener("loadend", () => {
         const url = this.__chatgptToolkitCaptureUrl || "";
-        if (!String(url).includes("conversation") && !String(url).includes("/backend-api/")) {
+        if (!shouldInspectResponse(url, { headers: { get: () => this.getResponseHeader("content-type") } })) {
           return;
         }
         if (this.responseType && this.responseType !== "text" && this.responseType !== "json") {

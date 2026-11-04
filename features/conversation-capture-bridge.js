@@ -7,6 +7,7 @@
   const PAGE_SCRIPT_PATH = "features/conversation-capture-page.js";
   const MESSAGE_SOURCE = "chatgpt-toolkit-conversation-capture";
   const MAX_CAPTURED_CONVERSATIONS = 20;
+  const MAX_CAPTURED_BYTES = 32 * 1024 * 1024;
 
   if (window[BRIDGE_FLAG]) {
     return;
@@ -77,6 +78,9 @@
     if (!payload) {
       return false;
     }
+    // Account for UTF-16 storage without retaining a second serialized copy.
+    const estimatedBytes = JSON.stringify(payload).length * 2;
+    if (estimatedBytes > MAX_CAPTURED_BYTES) return false;
 
     const conversationId = getCapturedConversationId(payload, href || url);
     const entry = {
@@ -85,6 +89,7 @@
       url,
       href: href || window.location.href,
       capturedAt,
+      estimatedBytes,
     };
 
     const cache = getConversationCache();
@@ -97,9 +102,14 @@
     cache.items.unshift(entry);
     cache.items = cache.items.slice(0, MAX_CAPTURED_CONVERSATIONS);
 
-    if (conversationId) {
-      cache.byId[conversationId] = entry;
+    let retainedBytes = cache.items.reduce((sum, item) => sum + item.estimatedBytes, 0);
+    while (retainedBytes > MAX_CAPTURED_BYTES && cache.items.length) {
+      retainedBytes -= cache.items.pop().estimatedBytes;
     }
+    cache.byId = Object.create(null);
+    cache.items.forEach((item) => {
+      if (item.conversationId) cache.byId[item.conversationId] = item;
+    });
 
     try {
       window.dispatchEvent(
@@ -132,6 +142,9 @@
         };
       }
     }
+    // An evicted conversation must be fetched again, never substituted with
+    // the most recently visited conversation.
+    if (candidates.some((candidate) => normalizeCapturedConversationId(candidate))) return null;
 
     const currentPath = window.location.pathname;
     const matchingPath = cache.items.find((entry) => {
