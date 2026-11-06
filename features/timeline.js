@@ -159,63 +159,177 @@ const getTimelineJumpTarget = (item) => {
   };
 };
 
-const getTimelineSourceNodes = () => {
-  const conversationIndex =
-    typeof getReadyConversationIndex === "function" ? getReadyConversationIndex() : null;
-  if (conversationIndex?.userMessages?.length) {
-    return conversationIndex.userMessages;
-  }
-  if (
-    typeof loadConversationIndex === "function" &&
-    !(
-      conversationIndexState.status === "failed" &&
-      typeof isConversationIndexForCurrentConversation === "function" &&
-      isConversationIndexForCurrentConversation()
-    )
-  ) {
+let timelineSourceCache = { signature: "", sources: [] };
+let timelineIndexRetryTimer = null;
+
+/*
+ * A missing, partial or stale index gets one background completion attempt.
+ * Failures leave the retry button available instead of starting a polling loop.
+ */
+const requestTimelineIndexRefresh = () => {
+  if (timelineIndexRetryTimer) return;
+  if (typeof loadConversationIndex !== "function") return;
+  if (typeof canLoadConversationIndex === "function" && !canLoadConversationIndex()) return;
+  if (typeof canAutomaticallyLoadConversationIndex === "function" && !canAutomaticallyLoadConversationIndex()) return;
+  if (conversationIndexState.loadingPromise || conversationIndexState.status === "loading") return;
+  timelineIndexRetryTimer = setTimeout(() => {
+    timelineIndexRetryTimer = null;
     loadConversationIndex()
       .then(() => {
-        if (timelineState.visible) {
-          scheduleTimelineRefresh();
-        }
+        if (timelineState.visible) scheduleTimelineRefresh();
       })
-      .catch(() => {});
-  }
+      .catch(() => {
+        if (timelineState.visible) scheduleTimelineRefresh();
+      });
+  }, 800);
+};
 
-  const sourceItems =
-    typeof getConversationMessageEntries === "function"
-      ? getConversationMessageEntries({
-          role: "user",
-          mode: TOOLKIT_MESSAGE_MODE_EXTENDED,
-          refreshDom: true,
-        })
-      : typeof getCachedMessageEntries === "function"
-        ? getCachedMessageEntries({ role: "user", mode: TOOLKIT_MESSAGE_MODE_EXTENDED })
-        : getUserMessageNodes();
-  const fallbackItems =
-    sourceItems.length > 0
-      ? sourceItems
-      : typeof getConversationMessageEntries === "function"
-        ? getConversationMessageEntries({
-            mode: TOOLKIT_MESSAGE_MODE_EXTENDED,
-            refreshDom: false,
-          })
-        : typeof getCachedMessageEntries === "function"
-          ? getCachedMessageEntries({ mode: TOOLKIT_MESSAGE_MODE_EXTENDED })
-          : getMessageNodes();
-  const uniqueItems = [];
-  const seenKeys = new Set();
+const getTimelineSourceNodes = () => {
+  const index = typeof getReadyConversationIndex === "function" ? getReadyConversationIndex() : null;
+  const refreshing = Boolean(conversationIndexState.loadingPromise) || conversationIndexState.status === "loading";
+  const autoCompletion = typeof canAutomaticallyLoadConversationIndex === "function"
+    ? canAutomaticallyLoadConversationIndex() : conversationIndexState.status === "idle";
+  const signature = [
+    state.conversationKey,
+    state.messageCacheRevision,
+    index?.version,
+    index?.loadedAt,
+    index?.status,
+    index?.branchId,
+    index?.completeness?.complete,
+    refreshing,
+    autoCompletion,
+    // The pending placeholder must clear even when no index ever arrives, so the
+    // read state itself participates in the cache signature.
+    index ? "indexed" : (typeof conversationIndexState !== "undefined" ? conversationIndexState.status : "unknown"),
+    !index && typeof isConversationIndexRestoring === "function" && isConversationIndexRestoring() ? "restoring" : "settled",
+  ].join(":");
+  if (signature === timelineSourceCache.signature) return timelineSourceCache.sources;
+  const live = typeof getConversationMessageEntries === "function"
+    ? getConversationMessageEntries({ role: "user", mode: TOOLKIT_MESSAGE_MODE_LOADED, refreshDom: false })
+    : getUserMessageNodes().map(node => ({node, role:"user", text:extractMessageText(node)}));
+  const idsFor = source => typeof getDomMessageIdCandidates === "function" && source.node instanceof HTMLElement
+    ? getDomMessageIdCandidates(source.node) : [];
+  let sources = [];
 
-  fallbackItems.forEach((source, index) => {
-    const key = getTimelineSourceKey(source, index);
-    if (!key || seenKeys.has(key)) {
-      return;
+  timelineState.countPartial = !index || index.completeness?.complete === false;
+  timelineState.countStale = Boolean(index && index.status === "stale");
+  timelineState.indexUpdatedAt = index ? (index.updatedAt || index.loadedAt || 0) : 0;
+  timelineState.indexBlocked =
+    typeof canLoadConversationIndex === "function" && !canLoadConversationIndex();
+  /*
+   * Before the first index exists, showing "5/5+" was indistinguishable from a
+   * broken recovery. While the stored index is being read or the first request
+   * is in flight, the count renders as a loading placeholder instead. Switching
+   * conversations leaves the previous conversation's index in memory, which is
+   * also "not read yet" for this page — it must not be shown as a partial count
+   * of the new conversation.
+   */
+  const currentIndexIds = typeof getConversationIndexIdCandidates === "function"
+    ? getConversationIndexIdCandidates()
+    : [];
+  const indexConversationId = typeof conversationIndexState !== "undefined"
+    ? conversationIndexState.conversationId
+    : "";
+  const indexBelongsToOtherConversation = Boolean(indexConversationId) &&
+    currentIndexIds.length > 0 &&
+    !currentIndexIds.includes(indexConversationId) &&
+    Boolean(conversationIndexState.messages.length);
+  timelineState.countPending = timelineState.countPartial && !timelineState.indexBlocked && (
+    refreshing || autoCompletion ||
+    indexBelongsToOtherConversation ||
+    (typeof isConversationIndexRestoring === "function" && isConversationIndexRestoring()) ||
+    (typeof conversationIndexState !== "undefined" &&
+      (conversationIndexState.status === "loading" ||
+        (conversationIndexState.status === "idle" && timelineState.indexBlocked === false)))
+  );
+
+  if (index) {
+    const sameIndex = timelineSourceCache.indexStamp === `${index.version}:${index.loadedAt}` && timelineSourceCache.conversationKey === state.conversationKey;
+    sources = sameIndex ? timelineSourceCache.sources.slice() : index.userMessages.slice();
+    const positions = new Map();
+    sources.forEach((source, position) => {
+      if (source.messageId) positions.set(source.messageId, position);
+    });
+
+    // Mounted nodes are attached to the full index; the index itself is never
+    // reduced to what happens to be rendered.
+    const liveById = new Map();
+    for (const entry of live) {
+      const knownId = idsFor(entry).find(id => positions.has(id));
+      if (knownId && !liveById.has(knownId)) {
+        liveById.set(knownId, entry);
+      }
     }
-    seenKeys.add(key);
-    uniqueItems.push(source);
-  });
+    if (liveById.size > 0) {
+      sources = sources.map((source) => {
+        const entry = source.messageId ? liveById.get(source.messageId) : null;
+        if (!entry) return source;
+        // Only keep a live reference while the node is really mounted; a
+        // detached subtree must not be retained by the timeline cache.
+        const liveNode = entry.node instanceof HTMLElement && entry.node.isConnected ? entry.node : null;
+        return { ...source, node: liveNode, liveNode, liveEntry: liveNode ? entry : null };
+      });
+    }
 
-  return uniqueItems;
+    let anchor = -1;
+    let divergent = false;
+    for (const entry of live) {
+      const ids = idsFor(entry);
+      const known = ids.find(id => positions.has(id));
+      if (known) {
+        anchor = positions.get(known);
+        continue;
+      }
+      if (!ids.length) {
+        // No stable id: it cannot be merged safely, so ignore it for the index.
+        continue;
+      }
+      // A new turn may only extend the last known turn of a verified complete
+      // branch. Anything else means the page is on a different branch.
+      if (anchor !== sources.length - 1 || anchor < 0 || index.completeness?.complete === false) {
+        divergent = true;
+        break;
+      }
+      const messageId = ids[0];
+      sources.push({ ...entry, key: "live:" + messageId, messageId, userOrder: sources.length + 1 });
+      positions.set(messageId, sources.length - 1);
+      anchor = sources.length - 1;
+    }
+
+    if (divergent) {
+      // Keep the full index; re-check the branch in the background instead of
+      // overwriting 47 known turns with 6 mounted ones.
+      timelineState.branchDiverged = true;
+      requestTimelineIndexRefresh();
+    } else {
+      timelineState.branchDiverged = false;
+      if (index.status === "stale" || index.completeness?.complete === false) {
+        requestTimelineIndexRefresh();
+      }
+    }
+  } else {
+    sources = live;
+    timelineState.branchDiverged = false;
+    // The index may still sit in extension storage from an earlier session: read
+    // it before settling for the few turns the page happens to have mounted.
+    if (typeof ensureConversationIndexRestored === "function") {
+      void ensureConversationIndexRestored().then((restored) => {
+        if (restored && timelineState.visible) scheduleTimelineRefresh();
+      });
+    }
+    if (!timelineState.indexBlocked) {
+      requestTimelineIndexRefresh();
+    }
+  }
+  const seen = new Set();
+  sources = sources.filter(source => {
+    const key = source.messageId || idsFor(source)[0] || source.key || source.node;
+    if (seen.has(key)) return false;
+    seen.add(key); return true;
+  }).map((source, i) => ({ ...source, userOrder: i + 1, order: i + 1, messageId: source.messageId || idsFor(source)[0] || "" }));
+  timelineSourceCache = { signature, sources, indexStamp: index ? `${index.version}:${index.loadedAt}` : null, conversationKey: state.conversationKey };
+  return sources;
 };
 
 const normalizeTimelineText = (text) => (text || "").replace(/\s+/g, " ").trim();
@@ -474,13 +588,13 @@ const markTimelineRefreshPending = () => {
   timelineState.refreshPending = true;
 };
 
-const updateTimelineBubblePlacement = () => {
+const updateTimelineBubblePlacement = (options = {}) => {
   const elements = getTimelineElements();
   const timeline = elements?.timeline;
   if (!(timeline instanceof HTMLElement)) {
     return;
   }
-  if (isTimelineInteractionLocked()) {
+  if (isTimelineInteractionLocked() && options.force !== true) {
     return;
   }
 
@@ -511,26 +625,55 @@ const hideTimelineHint = () => {
   if (!(hint instanceof HTMLElement)) {
     return;
   }
-  hint.classList.remove("is-visible");
+  if (timelineHintTimer) {
+    clearTimeout(timelineHintTimer);
+    timelineHintTimer = null;
+  }
+  hint.classList.remove("is-visible", "has-action");
   hint.textContent = "";
 };
 
-const showTimelineHint = (message) => {
+/*
+ * Options: { duration, persistent, action: { label, onClick } }. A persistent
+ * hint (used while a jump is loading) stays until the jump resolves or the user
+ * cancels it.
+ */
+const showTimelineHint = (message, options = {}) => {
   const elements = getTimelineElements();
   const hint = elements?.hint;
   if (!(hint instanceof HTMLElement)) {
     return;
   }
+  const settings = typeof options === "number" ? { duration: options } : options || {};
   if (timelineHintTimer) {
     clearTimeout(timelineHintTimer);
+    timelineHintTimer = null;
   }
   hint.textContent = message;
-  updateTimelineBubblePlacement();
+  hint.classList.toggle("has-action", Boolean(settings.action?.label));
+  if (settings.action?.label) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "chatgpt-toolkit-timeline-hint-action";
+    button.textContent = settings.action.label;
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      hideTimelineHint();
+      settings.action.onClick?.();
+    }, { once: true });
+    hint.appendChild(button);
+  }
   hint.classList.add("is-visible");
+  updateTimelineBubblePlacement({ force: true });
+  if (settings.persistent) {
+    return;
+  }
   timelineHintTimer = setTimeout(() => {
-    hint.classList.remove("is-visible");
+    hint.classList.remove("is-visible", "has-action");
+    hint.textContent = "";
     timelineHintTimer = null;
-  }, 2000);
+  }, settings.duration ?? 2000);
 };
 
 const hideTimelinePreview = () => {
@@ -770,7 +913,7 @@ const queueTimelineNodeResolveAfterJump = (index, options = {}) => {
         return;
       }
 
-      const liveNode = getTimelineSourceNode(item.source);
+      const liveNode = getTimelineSourceNode(item.source, { resolve: false });
       if (liveNode instanceof HTMLElement && liveNode.isConnected) {
         item.node = liveNode;
         if (typeof scrollElementIntoConversationView === "function") {
@@ -873,10 +1016,40 @@ const setTimelineActiveIndex = (index, options = {}) => {
             : timelineState.totalUserCount,
         onBeforeJump() {
           extendTimelineProgrammaticJump(jumpToken);
-          showTimelineHint(t("timeline.hintJumping"));
+          showTimelineHint(
+            t("timeline.hintLoadingTarget", { index: currentOrder, total: timelineState.totalUserCount }),
+            {
+              persistent: true,
+              action: {
+                label: t("timeline.hintCancel"),
+                onClick: () => {
+                  if (typeof cancelVirtualizedJump === "function") cancelVirtualizedJump();
+                  finishTimelineProgrammaticJump(jumpToken);
+                },
+              },
+            },
+          );
         },
-        onProgress() {
+        onProgress(progress) {
           extendTimelineProgrammaticJump(jumpToken);
+          if (!isTimelineJumpTokenActive(jumpToken)) return;
+          const attempt = Number(progress?.attempt);
+          showTimelineHint(
+            [
+              t("timeline.hintLoadingTarget", { index: currentOrder, total: timelineState.totalUserCount }),
+              Number.isFinite(attempt) && attempt > 0 ? t("timeline.hintAttempt", { attempt }) : "",
+            ].filter(Boolean).join(" · "),
+            {
+              persistent: true,
+              action: {
+                label: t("timeline.hintCancel"),
+                onClick: () => {
+                  if (typeof cancelVirtualizedJump === "function") cancelVirtualizedJump();
+                  finishTimelineProgrammaticJump(jumpToken);
+                },
+              },
+            },
+          );
         },
         onResolved: (resolvedNode) => {
           if (!isTimelineJumpTokenActive(jumpToken)) {
@@ -899,7 +1072,16 @@ const setTimelineActiveIndex = (index, options = {}) => {
           if (!isTimelineJumpTokenActive(jumpToken)) {
             return;
           }
-          showTimelineHint(t("timeline.hintMessageNotLoaded"));
+          // The full timeline stays usable; offer a direct retry of this entry.
+          showTimelineHint(t("timeline.hintTargetFailed"), {
+            persistent: true,
+            action: {
+              label: t("timeline.retryJump"),
+              onClick: () => {
+                setTimelineActiveIndex(index, { scrollToMessage: true, highlightMessage: true });
+              },
+            },
+          });
           finishTimelineProgrammaticJump(jumpToken);
         },
       });
@@ -1125,16 +1307,20 @@ const refreshTimelineItemViewportCache = (items, viewport = null) => {
 
   const metrics = viewport || getTimelineViewportMetrics();
   let measured = false;
+  const nodesById = new Map();
+  document.querySelectorAll("[data-message-author-role], [data-message-id], [data-chatgpt-selection-message-id]").forEach(node => {
+    const root = typeof normalizeMessageNode === "function" ? normalizeMessageNode(node) : node;
+    if (!(root instanceof HTMLElement)) return;
+    if (typeof getDomMessageIdCandidates === "function") for (const id of getDomMessageIdCandidates(root)) nodesById.set(id, root);
+  });
 
   safeItems.forEach((item) => {
-    const liveNode =
-      item?.node instanceof HTMLElement && item.node.isConnected
-        ? item.node
-        : getTimelineSourceNode(item?.source);
+    const liveNode = item.messageId ? nodesById.get(item.messageId) : getTimelineSourceNode(item?.source, { resolve: false });
     if (liveNode instanceof HTMLElement && liveNode.isConnected) {
       item.node = liveNode;
     }
 
+    if (!(liveNode instanceof HTMLElement)) item.node = null;
     const bounds = getTimelineItemViewportBounds(liveNode, metrics);
     if (!bounds) {
       item.viewportTop = Number.NaN;
@@ -1199,6 +1385,10 @@ const syncTimelineActiveFromViewport = () => {
   }
 
   const viewport = getTimelineViewportMetrics();
+  if (Date.now() - (timelineState.viewportMeasuredAt || 0) >= 100) {
+    refreshTimelineItemViewportCache(timelineState.items, viewport);
+    timelineState.viewportMeasuredAt = Date.now();
+  }
   let nextIndex = resolveTimelineNearestIndexFromCache(viewport);
   if (nextIndex < 0) {
     const measured = refreshTimelineItemViewportCache(timelineState.items, viewport);
@@ -1557,6 +1747,11 @@ const enableTimelineDrag = (timeline) => {
       return;
     }
 
+    const target = event.target;
+    if (target instanceof Element && target.closest("button, a, input, select, textarea, [role='button']")) {
+      return;
+    }
+
     event.preventDefault();
     const rect = timeline.getBoundingClientRect();
     const width = rect.width || timeline.offsetWidth || 64;
@@ -1629,6 +1824,22 @@ const handleTimelineWheel = (event) => {
 
 const handleTimelineClick = (event) => {
   const target = event.target;
+  const retryButton =
+    target instanceof Element ? target.closest('[data-action="timeline-index-retry"]') : null;
+  if (retryButton instanceof HTMLElement) {
+    event.preventDefault();
+    if (typeof loadConversationIndex === "function") {
+      loadConversationIndex({ force: true })
+        .then(() => {
+          if (timelineState.visible) forceTimelineRefresh();
+        })
+        .catch((error) => {
+          showTimelineHint(getExportApiErrorText(error, t("timeline.indexUnavailable")), 4000);
+        });
+    }
+    return;
+  }
+
   const nodeButton =
     target instanceof Element
       ? target.closest("[data-timeline-index]")
@@ -1819,8 +2030,50 @@ const updateTimelineCount = (currentNodeOrder, totalCount) => {
   }
   const current = Number.isFinite(currentNodeOrder) ? Math.max(0, Math.trunc(currentNodeOrder)) : 0;
   const total = Number.isFinite(totalCount) ? Math.max(0, Math.trunc(totalCount)) : 0;
-  count.textContent = `${current}/${total}`;
-  count.setAttribute("aria-label", t("timeline.countAria", { current, total }));
+  const retry = timelineState.rendered
+    ? document.querySelector(`#${TIMELINE_ID} [data-action="timeline-index-retry"]`)
+    : null;
+
+  if (timelineState.countPending) {
+    // A page fragment is not a full-history denominator while completion runs.
+    count.textContent = t("timeline.countLoading");
+    count.dataset.state = "loading";
+    count.title = t("timeline.countLoadingTitle");
+    count.setAttribute("aria-label", t("timeline.countLoadingTitle"));
+    if (retry instanceof HTMLElement) {
+      retry.hidden = true;
+    }
+    return;
+  }
+
+  count.textContent = timelineState.countPartial
+    ? t("timeline.countLoaded", { count: total }) : `${current}/${total}`;
+  count.dataset.state = timelineState.indexBlocked
+    ? "blocked"
+    : timelineState.countStale
+      ? "stale"
+      : timelineState.countPartial
+        ? "partial"
+        : "complete";
+  const reasonKey = timelineState.indexBlocked
+    ? "timeline.indexUnavailable"
+    : timelineState.countPartial
+      ? "timeline.partialCount"
+      : timelineState.countStale
+        ? "timeline.indexStale"
+        : "timeline.fullCount";
+  const updatedAt = timelineState.indexUpdatedAt
+    ? new Date(timelineState.indexUpdatedAt).toLocaleString()
+    : "";
+  count.title = updatedAt
+    ? `${t(reasonKey)} ${t("timeline.indexUpdatedAt", { time: updatedAt })}`
+    : t(reasonKey);
+  count.setAttribute("aria-label", timelineState.countPartial
+    ? `${count.textContent}. ${t(reasonKey)}` : t("timeline.countAria", { current, total }));
+
+  if (retry instanceof HTMLElement) {
+    retry.hidden = !(timelineState.indexBlocked || timelineState.countStale || timelineState.countPartial);
+  }
 };
 
 const updateTimelineToggleButton = () => {
@@ -1934,6 +2187,18 @@ const ensureTimeline = () => {
       }
     }
     existingTimeline.setAttribute("aria-label", t("timeline.ariaLabel"));
+    const existingHeader = existingTimeline.querySelector(".chatgpt-toolkit-timeline-header");
+    if (existingHeader instanceof HTMLElement && !existingHeader.querySelector('[data-action="timeline-index-retry"]')) {
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "chatgpt-toolkit-timeline-retry";
+      retry.dataset.action = "timeline-index-retry";
+      retry.hidden = true;
+      retry.textContent = "↻";
+      retry.setAttribute("aria-label", t("timeline.retryIndex"));
+      retry.title = t("timeline.retryIndex");
+      existingHeader.appendChild(retry);
+    }
     existingTimeline.classList.toggle("is-hidden", !timelineState.visible);
     enableTimelineDrag(existingTimeline);
     updateTimelinePosition();
@@ -1957,6 +2222,7 @@ const ensureTimeline = () => {
       <div class="chatgpt-toolkit-timeline-header">
         <span class="chatgpt-toolkit-timeline-title">${t("timeline.title")}</span>
         <span id="${TIMELINE_COUNT_ID}" class="chatgpt-toolkit-timeline-count">0/0</span>
+        <button type="button" class="chatgpt-toolkit-timeline-retry" data-action="timeline-index-retry" hidden aria-label="${t("timeline.retryIndex")}" title="${t("timeline.retryIndex")}">↻</button>
       </div>
       <div id="${TIMELINE_TRACK_ID}" class="chatgpt-toolkit-timeline-track">
         <div class="${TIMELINE_CONTENT_CLASS}"></div>

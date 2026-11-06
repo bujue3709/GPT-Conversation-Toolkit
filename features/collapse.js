@@ -398,6 +398,7 @@ const scheduleAutoReoptimizeCurrentConversation = () => {
 };
 
 const syncCollapseMemoryForCurrentConversation = (options = {}) => {
+  if (!COLLAPSE_AUTO_MEMORY_ENABLED) return;
   const { triggerAuto = false, forceAuto = false } = options;
 
   ensureConversationState();
@@ -441,6 +442,7 @@ const syncCollapseMemoryForCurrentConversation = (options = {}) => {
 };
 
 const initCollapseMemory = () => {
+  if (!COLLAPSE_AUTO_MEMORY_ENABLED) return;
   if (collapseMemoryState.initialized) {
     return;
   }

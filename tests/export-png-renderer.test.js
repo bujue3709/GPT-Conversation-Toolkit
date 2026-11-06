@@ -118,9 +118,18 @@ const sandbox = {
     const template = messages[activeLocale]?.[key] || key;
     return template.replace(/\{(\w+)\}/g, (match, name) => params[name] ?? match);
   },
-  buildConversationExportFilename: () => {
+  createExportArchiveSink: async (filename) => ({ filename }),
+  createExportZipWriter: (sink) => {
+    const names = [];
+    return {
+      add: async (name) => names.push(name),
+      close: async () => { downloads.push(sink.filename); sandbox.archiveNames = names; },
+      abort: async () => { sandbox.archiveAborted = true; },
+    };
+  },
+  buildConversationExportFilename: (_, format = "png") => {
     filenameBuildCalls += 1;
-    return "chatgpt-renderer-test-2026-09-17.png";
+    return `chatgpt-renderer-test-2026-09-17.${format}`;
   },
 };
 vm.createContext(sandbox);
@@ -225,12 +234,12 @@ assert.equal(api.buildConversationPngFilename(longPayload, 0, longPages.length),
   filenameBuildCalls = 0;
   const result = await api.exportConversationPng(longPayload);
   assert.equal(result.pageCount, longPages.length);
-  assert.equal(downloads.length, longPages.length);
-  assert.match(downloads[0], /-part-01\.png$/);
-  assert.match(downloads.at(-1), new RegExp(`-part-${String(longPages.length).padStart(2, "0")}\\.png$`));
+  assert.deepEqual(downloads, ["chatgpt-renderer-test-2026-09-17.zip"]);
+  assert.equal(sandbox.archiveNames.length, longPages.length);
+  assert.equal(sandbox.archiveNames[0], "pages/conversation-001.png");
   assert.equal(maxActiveLargeCanvases, 1);
   assert.equal(activeLargeCanvases, 0);
-  assert.equal(filenameBuildCalls, 1, "all PNG parts must share one timestamped base filename");
+  assert.equal(filenameBuildCalls, 2, "all PNG parts must share one timestamped base filename");
   assert.ok(statuses.some((entry) => entry.key === "status.pngGeneratingPage"));
   assert.equal(statuses.at(-1).key, "status.pngDoneMultiple");
   assert.ok(drawnText.includes("由 "));
@@ -244,7 +253,8 @@ assert.equal(api.buildConversationPngFilename(longPayload, 0, longPages.length),
     () => api.exportConversationPng(longPayload),
     (error) => error.code === "PNG_RENDER_FAILED" && /page 3/i.test(error.message),
   );
-  assert.equal(downloads.length, 2, "pages after a failed render must not be downloaded");
+  assert.equal(downloads.length, 0, "failed multi-page renders must deliver no partial ZIP");
+  assert.equal(sandbox.archiveAborted, true);
   assert.equal(activeLargeCanvases, 0);
   console.log(`PNG renderer tests passed (${longPages.length} pages, max ${maxActiveLargeCanvases} large canvas).`);
 })().catch((error) => {

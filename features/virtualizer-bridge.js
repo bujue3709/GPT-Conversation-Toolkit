@@ -16,7 +16,7 @@ const virtualizerBridgeState = {
 };
 
 const handleVirtualizerBridgeMessage = (event) => {
-  if (event.source !== window) {
+  if (event.source !== window || event.origin !== window.location.origin) {
     return;
   }
 
@@ -144,7 +144,7 @@ const requestVirtualizerScrollToIndex = async (candidates, options = {}) => {
           behavior: "auto",
         },
       },
-      "*",
+      window.location.origin,
     );
   });
 };

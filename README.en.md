@@ -29,6 +29,17 @@ Impact on this extension:
 - Search and timeline jumps use a unified virtualized-jump flow: locate the target message, wait for ChatGPT to mount the target DOM, then confirm the node by message ID or preview text.
 - The old long-conversation cleanup / collapse feature is deprecated. ChatGPT Web's own virtualized list already unmounts messages far outside the viewport, so the extension no longer needs to hide older messages. Extra collapsing can interfere with search, timeline positioning, and native page behavior.
 
+## Long conversations and export improvements (preview) 🛡️
+
+- Long-conversation handling and export performance are improved; exports can now package images from the selected messages.
+- Timeline, search and export share a conversation index. Virtualized DOM windows do not discard known history; extension storage can restore a cached branch after a reload, with its timestamp shown.
+- The conversation ID in the URL owns route identity. Distant jumps wait for the target to mount and confirm its message ID; failures offer a retry.
+- Reads try the current site's plain endpoint first, then a bounded set of compatible endpoints. Explicit challenges stop requests immediately; 429 uses the server's cooldown. Cached data remains usable after a failure. A DOM-only export requires an explicit choice to export the loaded part.
+- Image downloads are optional and off by default. The ZIP contains the selected format, originals and an integrity manifest. Progress includes elapsed time and an approximate remaining download time. Single-page PNG downloads directly; multiple PNG pages download as one ZIP.
+- Closing the export dialog cancels the job. The underlying conversation read stops when its last subscriber cancels. Search uses Range highlights without replacing message text nodes.
+
+See [reliability notes](./docs/reliability.md) for diagnostics and validation boundaries, and [image export](./docs/image-export.md) for format and resource limits.
+
 ## Supported Sites
 
 - `https://chat.openai.com/*`
@@ -132,6 +143,8 @@ The toolbar footer also includes two lightweight links:
 - The footer shows the resulting turn and message counts, and disables export when no messages remain after filtering.
 - Settings control the default export format and content; available formats are `.json`, `.txt`, `.md`, and `.png`.
 - Export prefers API conversation data, so it can still export the full conversation even when only part of the virtualized DOM is mounted.
+- Under “Images in selected messages,” choose “Package these images” to package images found in the messages included in this export; images from unselected messages are not added. The ZIP contains the selected chat format, those image files and a manifest. PNG produces rendered pages; Markdown uses relative image paths.
+- Uploaded images, generated images, tool image outputs and Markdown image links in selected messages are supported. Missing images are reported explicitly. Downloads, caches and PNG decoding are bounded, and exports can be cancelled. See [image export and resource limits](docs/image-export.md).
 - If API data is unavailable, export falls back to loaded/cached messages and displays a partial-data warning.
 
 ### Search

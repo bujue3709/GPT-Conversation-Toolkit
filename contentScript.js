@@ -620,25 +620,22 @@ if (!window[TOOLKIT_BOOTSTRAP_FLAG]) {
       window.dispatchEvent(new Event(TOOLKIT_ROUTE_EVENT));
     };
 
-    const patchHistoryMethod = (methodName) => {
-      const originalMethod = history[methodName];
-      if (typeof originalMethod !== "function") {
-        return;
-      }
-      history[methodName] = function patchedHistoryMethod(...args) {
-        const result = originalMethod.apply(this, args);
-        emitRouteChange();
-        return result;
-      };
-    };
-
-    patchHistoryMethod("pushState");
-    patchHistoryMethod("replaceState");
+    // Native navigation events are visible across extension worlds. The MAIN
+    // capture script supplies history notifications on older browsers.
+    window.navigation?.addEventListener("currententrychange", emitRouteChange);
+    window.navigation?.addEventListener("navigatesuccess", emitRouteChange);
 
     window.addEventListener("popstate", emitRouteChange, { passive: true });
     window.addEventListener("hashchange", emitRouteChange, { passive: true });
 
+    let routeSyncTimers = [];
     window.addEventListener(TOOLKIT_ROUTE_EVENT, () => {
+      clearTextHighlights();
+      routeSyncTimers.forEach(clearTimeout);
+      // React may replace <main> after the URL commits. Rebind after rendering.
+      routeSyncTimers = [100, 400, 1000].map((delay) => setTimeout(() => {
+        syncScopedObservers({ forcePresenceCheck: true, retriesRemaining: 2 });
+      }, delay));
       syncScopedObservers({
         forcePresenceCheck: true,
         retriesRemaining: OBSERVER_ROOT_RETRY_LIMIT,

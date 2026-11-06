@@ -2,6 +2,8 @@
  * ChatGPT Conversation Toolkit - DOM utilities
  */
 const getConversationKey = () => {
+  const routeId = window.location.pathname.match(/\/c\/([^/?#]+)/)?.[1];
+  if (routeId) return routeId;
   const domConversationId =
     document
       .querySelector("[data-conversation-id]")
@@ -34,6 +36,9 @@ const normalizeStrictConversationId = (value) => {
 };
 
 const getStrictConversationIdCandidates = () => {
+  // The committed route owns identity while React is still replacing old DOM.
+  const routeId = normalizeStrictConversationId(window.location.pathname.match(/\/c\/([^/?#]+)/)?.[1]);
+  if (routeId) return [routeId];
   const candidates = [];
   const seen = new Set();
   const addCandidate = (value) => {
@@ -409,7 +414,7 @@ const syncMessageCacheFromNodes = (nodes) => {
       return;
     }
 
-    const text = extractMessageText(node);
+    const text = extractMessageText(node) || (node.querySelector("img") ? "[Image]" : "");
     if (!text) {
       return;
     }
@@ -773,10 +778,9 @@ const getElementReadableText = (element) => {
   if (!(element instanceof HTMLElement)) {
     return "";
   }
-  const clone = element.cloneNode(true);
-  clone
-    .querySelectorAll(
-      [
+  // Reading text must not clone resource elements: even detached image clones
+  // can trigger loads and flood the browser's extension activity log.
+  const excludedSelector = [
         "button",
         "script",
         "style",
@@ -791,10 +795,20 @@ const getElementReadableText = (element) => {
         `#${MINIMIZED_ID}`,
         `#${TIMELINE_ID}`,
         `#${PROMPT_MODAL_ID}`,
-      ].join(", "),
-    )
-    .forEach((child) => child.remove());
-  return (clone.textContent || "").trim();
+      ].join(", ");
+  const walker = element.ownerDocument.createTreeWalker(
+    element,
+    NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+    {
+      acceptNode(node) {
+        if (node.nodeType === Node.TEXT_NODE) return NodeFilter.FILTER_ACCEPT;
+        return node.matches(excludedSelector) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_SKIP;
+      },
+    },
+  );
+  const text = [];
+  while (walker.nextNode()) text.push(walker.currentNode.nodeValue || "");
+  return text.join("").trim();
 };
 
 const extractMessageText = (node) => {
@@ -868,6 +882,7 @@ const buildMessagePayloadFromEntries = (entries) =>
   }));
 
 const updateStatus = (message, tone = "info") => {
+  if (typeof updateExportSelectionProgress === "function") updateExportSelectionProgress(message, tone);
   const status = document.getElementById(STATUS_ID);
   if (!status) {
     return;
@@ -879,6 +894,7 @@ const updateStatus = (message, tone = "info") => {
 };
 
 const updateStatusByKey = (key, tone = "info", params = {}) => {
+  if (typeof updateExportSelectionProgress === "function") updateExportSelectionProgress(t(key, params), tone);
   const status = document.getElementById(STATUS_ID);
   if (!status) {
     return;

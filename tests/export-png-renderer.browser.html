@@ -36,7 +36,7 @@
         ],
       };
 
-      exportConversationPng(payload)
+      exportConversationPng(payload, { onPage: (blob, index) => downloadPngBlob(blob, `smoke-part-${String(index + 1).padStart(2, "0")}.png`) })
         .then(({ pageCount }) => {
           const validBlobs = encodedBlobs.every((blob) => blob.type === "image/png" && blob.size > 0);
           const sequentialNames = downloadedFiles.every((filename, index) =>

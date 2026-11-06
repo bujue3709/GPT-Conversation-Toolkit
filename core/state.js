@@ -137,6 +137,11 @@ const timelineState = {
   pointerDown: false,
   dragging: false,
   refreshPending: false,
+  countPartial: false,
+  countStale: false,
+  countPending: false,
+  indexBlocked: false,
+  indexUpdatedAt: 0,
 };
 const conversationIndexState = {
   conversationId: "",
@@ -152,6 +157,11 @@ const conversationIndexState = {
   byIndex: new Map(),
   byUserOrder: new Map(),
   loadedAt: 0,
+  updatedAt: 0,
+  failedAt: 0,
+  completeness: null,
+  branchId: "",
+  dataSource: "",
   warnings: [],
   error: null,
 };
@@ -220,6 +230,7 @@ const themeAttributeFilter = ["class", "data-theme", "style"];
 const TOOLKIT_BOOTSTRAP_FLAG = "__chatgptConversationToolkitBootstrapped";
 
 const TOOLKIT_CONFIG_KEY = "chatgpt-toolkit-config-v2";
+let TOOLKIT_EXPORT_IMAGES = false;
 const TOOLKIT_CONFIG_DEFAULTS = Object.freeze({
   keepLatest: 20,
   autoReoptimizeBuffer: 10,
@@ -229,6 +240,7 @@ const TOOLKIT_CONFIG_DEFAULTS = Object.freeze({
   messageMode: TOOLKIT_MESSAGE_MODE_LOADED,
   exportFormat: TOOLKIT_EXPORT_FORMAT_JSON,
   exportRole: TOOLKIT_EXPORT_ROLE_ALL,
+  exportImages: false,
   latexCopyFormat: TOOLKIT_LATEX_COPY_FORMAT_RAW,
 });
 const TOOLKIT_CONFIG_LIMITS = Object.freeze({
@@ -254,6 +266,7 @@ const normalizeToolkitConfigInteger = (value, fallback, limits) => {
 };
 
 const normalizeToolkitConfig = (config = {}) => ({
+  exportImages: config.exportImages === true,
   keepLatest: normalizeToolkitConfigInteger(
     config.keepLatest,
     TOOLKIT_CONFIG_DEFAULTS.keepLatest,
@@ -301,6 +314,7 @@ const applyToolkitConfig = (config = {}) => {
   TOOLKIT_MESSAGE_MODE = normalized.messageMode;
   TOOLKIT_EXPORT_FORMAT = normalized.exportFormat;
   TOOLKIT_EXPORT_ROLE = normalized.exportRole;
+  TOOLKIT_EXPORT_IMAGES = normalized.exportImages;
   TOOLKIT_LATEX_COPY_FORMAT = normalized.latexCopyFormat;
   return normalized;
 };
@@ -315,6 +329,7 @@ const getToolkitConfig = () =>
     messageMode: TOOLKIT_MESSAGE_MODE,
     exportFormat: TOOLKIT_EXPORT_FORMAT,
     exportRole: TOOLKIT_EXPORT_ROLE,
+    exportImages: TOOLKIT_EXPORT_IMAGES,
     latexCopyFormat: TOOLKIT_LATEX_COPY_FORMAT,
   });
 

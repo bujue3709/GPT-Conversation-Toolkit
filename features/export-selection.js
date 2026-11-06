@@ -14,12 +14,45 @@ const exportSelectionState = {
   scope: EXPORT_SCOPE_ALL,
   roleFilter: TOOLKIT_EXPORT_ROLE_ALL,
   format: TOOLKIT_EXPORT_FORMAT_JSON,
+  includeImages: false,
   page: 0,
   lastSelectedTurnIndex: -1,
   error: null,
+  requiresPartialConsent: false,
+  consentError: null,
+  cacheNotice: null,
   previousFocus: null,
+  preparationController: null,
 };
 
+let exportSelectionImageProgress = null;
+const setExportSelectionImageProgress = (progress) => {
+  exportSelectionImageProgress = progress && { ...progress, estimateAt: Date.now(), remainingMs: progress.completed > 0 ? (Date.now() - progress.startedAt) / progress.completed * (progress.total - progress.completed) : null };
+};
+let exportSelectionProgressTimer = null;
+let exportSelectionProgressStarted = 0;
+const updateExportSelectionProgress = (message, tone = "info") => {
+  const modal = getExportSelectionModal();
+  if (!modal || !exportSelectionState.isOpen) return;
+  const status = modal.querySelector("[data-export-selection-progress]");
+  if (status && message !== undefined) {
+    status.hidden = false;
+    status.textContent = message;
+    status.dataset.tone = tone;
+  }
+  const busy = exportInProgress;
+  modal.setAttribute("aria-busy", String(busy));
+  const button = modal.querySelector("[data-export-selection-export-button]");
+  if (button) {
+    button.disabled = busy || !getExportSelectionResultPreview()?.messageCount;
+    button.textContent = t(busy ? "exportImages.running" : "exportSelection.export");
+  }
+  modal.querySelectorAll("select, input, [data-export-selection-action='select-all'], [data-export-selection-action='clear'], [data-export-selection-action='invert']").forEach(control => { control.disabled = busy; });
+  if (!busy) {
+    clearInterval(exportSelectionProgressTimer);
+    exportSelectionProgressTimer = null;
+  }
+};
 let exportSelectionEscapeBound = false;
 
 const escapeExportSelectionHtml = (value) =>
@@ -35,7 +68,39 @@ const truncateExportSelectionText = (value, maxLength = 180) => {
   return text.length <= maxLength ? text : `${text.slice(0, maxLength)}…`;
 };
 
+const formatExportSelectionTime = (value) => {
+  const timestamp = Number(value) || 0;
+  if (!timestamp) return t("exportSelection.unknownTime");
+  try {
+    return new Date(timestamp).toLocaleString();
+  } catch (error) {
+    return "";
+  }
+};
+
 const getExportSelectionModal = () => document.getElementById(EXPORT_SELECTION_MODAL_ID);
+
+/*
+ * Shows which request failed, so a 403 can be attributed without opening
+ * DevTools: endpoint category, redacted path, status and duration only.
+ */
+const buildExportSelectionAccessDetail = (error) => {
+  if (typeof getConversationAccessStatus !== "function") return "";
+  const access = getConversationAccessStatus() || {};
+  const status = Number(access.status) || Number(error?.status) || 0;
+  const path = access.path || "";
+  if (!status && !path) return "";
+  const category = access.category === "session"
+    ? t("exportAccess.categorySession")
+    : t("exportAccess.categoryConversation");
+  const detail = t("exportSelection.accessDetail", {
+    category,
+    path: path || "-",
+    status: status || "-",
+    duration: Number(access.durationMs) || 0,
+  });
+  return `<div class="chatgpt-toolkit-export-diagnostic">${escapeExportSelectionHtml(detail)}</div>`;
+};
 
 const getExportSelectionConfig = () =>
   typeof getToolkitConfig === "function"
@@ -61,11 +126,23 @@ const resetExportSelectionState = () => {
   exportSelectionState.page = 0;
   exportSelectionState.lastSelectedTurnIndex = -1;
   exportSelectionState.error = null;
+  exportSelectionState.requiresPartialConsent = false;
+  exportSelectionState.consentError = null;
+  exportSelectionState.cacheNotice = null;
+  exportSelectionState.includeImages = config.exportImages === true;
 };
 
 const closeExportSelectionModal = () => {
+  clearInterval(exportSelectionProgressTimer);
+  exportSelectionProgressTimer = null;
+  cancelConversationExport();
+  exportSelectionState.preparationController?.abort();
+  exportSelectionState.preparationController = null;
   exportSelectionState.isOpen = false;
   exportSelectionState.loadToken += 1;
+  exportSelectionState.preparedExport = null;
+  exportSelectionState.turns = [];
+  exportSelectionState.selectedTurnIds.clear();
   const modal = getExportSelectionModal();
   if (modal instanceof HTMLElement) {
     modal.classList.remove("is-visible");
@@ -125,9 +202,9 @@ const buildExportSelectionTurnMarkup = () => {
             ${checked ? "checked" : ""}
           />
           <span class="chatgpt-toolkit-export-turn-body">
-            <strong>${t("exportSelection.turn", { index: turn.order })}</strong>
-            <span><b>${t("exportSelection.userLabel")}</b>${escapeExportSelectionHtml(userPreview)}</span>
-            <span><b>${t("exportSelection.assistantLabel")}</b>${escapeExportSelectionHtml(assistantPreview)}</span>
+            <strong>${tHtml("exportSelection.turn", { index: turn.order })}</strong>
+            <span><b>${tHtml("exportSelection.userLabel")}</b>${escapeExportSelectionHtml(userPreview)}</span>
+            <span><b>${tHtml("exportSelection.assistantLabel")}</b>${escapeExportSelectionHtml(assistantPreview)}</span>
           </span>
         </label>
       `;
@@ -144,12 +221,37 @@ const renderExportSelectionModal = () => {
   if (exportSelectionState.loading) {
     modal.innerHTML = `
       <div class="chatgpt-toolkit-prompt-backdrop" data-export-selection-action="close"></div>
-      <div class="chatgpt-toolkit-prompt-panel chatgpt-toolkit-export-panel" role="dialog" aria-modal="true" aria-label="${t("exportSelection.ariaLabel")}">
+      <div class="chatgpt-toolkit-prompt-panel chatgpt-toolkit-export-panel" role="dialog" aria-modal="true" aria-label="${tHtml("exportSelection.ariaLabel")}">
         <div class="chatgpt-toolkit-prompt-header">
-          <strong>${t("exportSelection.title")}</strong>
-          <button type="button" class="chatgpt-toolkit-prompt-close" data-export-selection-action="close">${t("exportSelection.close")}</button>
+          <strong>${tHtml("exportSelection.title")}</strong>
+          <button type="button" class="chatgpt-toolkit-prompt-close" data-export-selection-action="close">${tHtml("exportSelection.close")}</button>
         </div>
-        <div class="chatgpt-toolkit-export-loading">${t("exportSelection.loading")}</div>
+        <div class="chatgpt-toolkit-export-loading">${tHtml("exportSelection.loading")}</div>
+      </div>
+    `;
+    return;
+  }
+
+  if (exportSelectionState.requiresPartialConsent) {
+    const reasonText = getExportApiErrorText(exportSelectionState.consentError, t("exportSelection.partialChoice"));
+    const accessDetail = buildExportSelectionAccessDetail(exportSelectionState.consentError);
+    modal.innerHTML = `
+      <div class="chatgpt-toolkit-prompt-backdrop" data-export-selection-action="close"></div>
+      <div class="chatgpt-toolkit-prompt-panel chatgpt-toolkit-export-panel" role="dialog" aria-modal="true" aria-label="${tHtml("exportSelection.ariaLabel")}">
+        <div class="chatgpt-toolkit-prompt-header">
+          <strong>${tHtml("exportSelection.title")}</strong>
+          <button type="button" class="chatgpt-toolkit-prompt-close" data-export-selection-action="close">${tHtml("exportSelection.close")}</button>
+        </div>
+        <div class="chatgpt-toolkit-export-error">${escapeExportSelectionHtml(reasonText)}</div>
+        ${accessDetail}
+        <div class="chatgpt-toolkit-export-warning">${tHtml("exportSelection.exportLoadedHint")}</div>
+        <div class="chatgpt-toolkit-prompt-footer">
+          <span></span>
+          <div class="chatgpt-toolkit-prompt-footer-actions">
+            <button type="button" data-export-selection-action="retry">${tHtml("exportSelection.retryLoad")}</button>
+            <button type="button" class="chatgpt-toolkit-primary" data-export-selection-action="export-loaded">${tHtml("exportSelection.exportLoaded")}</button>
+          </div>
+        </div>
       </div>
     `;
     return;
@@ -158,16 +260,16 @@ const renderExportSelectionModal = () => {
   if (exportSelectionState.error) {
     modal.innerHTML = `
       <div class="chatgpt-toolkit-prompt-backdrop" data-export-selection-action="close"></div>
-      <div class="chatgpt-toolkit-prompt-panel chatgpt-toolkit-export-panel" role="dialog" aria-modal="true" aria-label="${t("exportSelection.ariaLabel")}">
+      <div class="chatgpt-toolkit-prompt-panel chatgpt-toolkit-export-panel" role="dialog" aria-modal="true" aria-label="${tHtml("exportSelection.ariaLabel")}">
         <div class="chatgpt-toolkit-prompt-header">
-          <strong>${t("exportSelection.title")}</strong>
-          <button type="button" class="chatgpt-toolkit-prompt-close" data-export-selection-action="close">${t("exportSelection.close")}</button>
+          <strong>${tHtml("exportSelection.title")}</strong>
+          <button type="button" class="chatgpt-toolkit-prompt-close" data-export-selection-action="close">${tHtml("exportSelection.close")}</button>
         </div>
-        <div class="chatgpt-toolkit-export-error">${escapeExportSelectionHtml(exportSelectionState.error.message || exportSelectionState.error)}</div>
+        <div class="chatgpt-toolkit-export-error">${escapeExportSelectionHtml(getExportApiErrorText(exportSelectionState.error))}</div>
         <div class="chatgpt-toolkit-prompt-footer">
           <span></span>
           <div class="chatgpt-toolkit-prompt-footer-actions">
-            <button type="button" data-export-selection-action="retry">${t("exportSelection.retry")}</button>
+            <button type="button" data-export-selection-action="retry">${tHtml("exportSelection.retry")}</button>
           </div>
         </div>
       </div>
@@ -181,64 +283,78 @@ const renderExportSelectionModal = () => {
   const selectedCount = exportSelectionState.selectedTurnIds.size;
   const messageCount = resultPreview?.messageCount || 0;
   const fallbackApiError = exportSelectionState.preparedExport?.payload?.apiError;
-  const fallbackReason = fallbackApiError
-    ? [
-        fallbackApiError.code || "API_ERROR",
-        Number.isFinite(fallbackApiError.status) ? `HTTP ${fallbackApiError.status}` : "",
-      ].filter(Boolean).join(" · ")
-    : "";
   const partialWarning = exportSelectionState.preparedExport?.usedFallback
     ? `<div class="chatgpt-toolkit-export-warning">
-        ${t("exportSelection.partialWarning")}
-        ${fallbackReason ? `<br><small>${escapeExportSelectionHtml(fallbackReason)}</small>` : ""}
+        ${tHtml("exportSelection.partialWarning")}
+        ${fallbackApiError ? `<br><small>${escapeExportSelectionHtml(getExportApiErrorText(fallbackApiError))}</small>` : ""}
+      </div>`
+    : "";
+  const cacheNotice = exportSelectionState.cacheNotice
+    ? `<div class="chatgpt-toolkit-export-warning">
+        ${tHtml("exportSelection.cacheNotice", {
+          time: formatExportSelectionTime(exportSelectionState.cacheNotice.updatedAt),
+          completeness: t(
+            exportSelectionState.cacheNotice.completeness === "complete"
+              ? "exportSelection.completeLabel"
+              : "exportSelection.partialLabel",
+          ),
+        })}
       </div>`
     : "";
   const turnSection = `
     <div data-export-selection-turn-section ${isSelectedScope ? "" : "hidden"}>
       <div class="chatgpt-toolkit-export-selection-tools">
-        <span data-export-selection-selected-count>${t("exportSelection.selectedCount", { selected: selectedCount, total: exportSelectionState.turns.length })}</span>
+        <span data-export-selection-selected-count>${tHtml("exportSelection.selectedCount", { selected: selectedCount, total: exportSelectionState.turns.length })}</span>
         <div>
-          <button type="button" data-export-selection-action="select-all">${t("exportSelection.selectAll")}</button>
-          <button type="button" data-export-selection-action="invert">${t("exportSelection.invert")}</button>
-          <button type="button" data-export-selection-action="clear">${t("exportSelection.clear")}</button>
+          <button type="button" data-export-selection-action="select-all">${tHtml("exportSelection.selectAll")}</button>
+          <button type="button" data-export-selection-action="invert">${tHtml("exportSelection.invert")}</button>
+          <button type="button" data-export-selection-action="clear">${tHtml("exportSelection.clear")}</button>
         </div>
       </div>
-      <div class="chatgpt-toolkit-export-turn-list" data-export-selection-turn-list role="group" aria-label="${t("exportSelection.turnListAria")}">
+      <div class="chatgpt-toolkit-export-turn-list" data-export-selection-turn-list role="group" aria-label="${tHtml("exportSelection.turnListAria")}">
         ${buildExportSelectionTurnMarkup()}
       </div>
       <div class="chatgpt-toolkit-export-pagination">
-        <button type="button" data-export-selection-action="prev-page" ${exportSelectionState.page <= 0 ? "disabled" : ""}>${t("exportSelection.prevPage")}</button>
-        <span data-export-selection-page>${t("exportSelection.page", { current: exportSelectionState.page + 1, total: pageCount })}</span>
-        <button type="button" data-export-selection-action="next-page" ${exportSelectionState.page >= pageCount - 1 ? "disabled" : ""}>${t("exportSelection.nextPage")}</button>
+        <button type="button" data-export-selection-action="prev-page" ${exportSelectionState.page <= 0 ? "disabled" : ""}>${tHtml("exportSelection.prevPage")}</button>
+        <span data-export-selection-page>${tHtml("exportSelection.page", { current: exportSelectionState.page + 1, total: pageCount })}</span>
+        <button type="button" data-export-selection-action="next-page" ${exportSelectionState.page >= pageCount - 1 ? "disabled" : ""}>${tHtml("exportSelection.nextPage")}</button>
       </div>
     </div>
   `;
 
   modal.innerHTML = `
     <div class="chatgpt-toolkit-prompt-backdrop" data-export-selection-action="close"></div>
-    <div class="chatgpt-toolkit-prompt-panel chatgpt-toolkit-export-panel" role="dialog" aria-modal="true" aria-label="${t("exportSelection.ariaLabel")}">
+    <div class="chatgpt-toolkit-prompt-panel chatgpt-toolkit-export-panel" role="dialog" aria-modal="true" aria-label="${tHtml("exportSelection.ariaLabel")}">
       <div class="chatgpt-toolkit-prompt-header">
-        <strong>${t("exportSelection.title")}</strong>
-        <button type="button" class="chatgpt-toolkit-prompt-close" data-export-selection-action="close">${t("exportSelection.close")}</button>
+        <strong>${tHtml("exportSelection.title")}</strong>
+        <button type="button" class="chatgpt-toolkit-prompt-close" data-export-selection-action="close">${tHtml("exportSelection.close")}</button>
       </div>
       ${partialWarning}
+      ${cacheNotice}
+      <label class="chatgpt-toolkit-form-group">
+        <span class="chatgpt-toolkit-form-label">${tHtml("exportImages.label")}</span>
+        <select class="chatgpt-toolkit-input" data-export-selection-field="images">
+          <option value="false"${!exportSelectionState.includeImages ? " selected" : ""}>${tHtml("exportImages.textOnly")}</option>
+          <option value="true"${exportSelectionState.includeImages ? " selected" : ""}>${tHtml("exportImages.include")}</option>
+        </select>
+      </label>
       <div class="chatgpt-toolkit-export-controls">
         <label class="chatgpt-toolkit-form-group">
-          <span class="chatgpt-toolkit-form-label">${t("exportSelection.scopeLabel")}</span>
+          <span class="chatgpt-toolkit-form-label">${tHtml("exportSelection.scopeLabel")}</span>
           <select class="chatgpt-toolkit-input" data-export-selection-field="scope">
-            <option value="${EXPORT_SCOPE_ALL}"${exportSelectionState.scope === EXPORT_SCOPE_ALL ? " selected" : ""}>${t("exportSelection.scopeAll")}</option>
-            <option value="${EXPORT_SCOPE_SELECTED}"${isSelectedScope ? " selected" : ""}>${t("exportSelection.scopeSelected")}</option>
+            <option value="${EXPORT_SCOPE_ALL}"${exportSelectionState.scope === EXPORT_SCOPE_ALL ? " selected" : ""}>${tHtml("exportSelection.scopeAll")}</option>
+            <option value="${EXPORT_SCOPE_SELECTED}"${isSelectedScope ? " selected" : ""}>${tHtml("exportSelection.scopeSelected")}</option>
           </select>
         </label>
         <label class="chatgpt-toolkit-form-group">
-          <span class="chatgpt-toolkit-form-label">${t("exportSelection.roleLabel")}</span>
+          <span class="chatgpt-toolkit-form-label">${tHtml("exportSelection.roleLabel")}</span>
           <select class="chatgpt-toolkit-input" data-export-selection-field="role">
-            <option value="${TOOLKIT_EXPORT_ROLE_ALL}"${exportSelectionState.roleFilter === TOOLKIT_EXPORT_ROLE_ALL ? " selected" : ""}>${t("exportSelection.roleAll")}</option>
-            <option value="${TOOLKIT_EXPORT_ROLE_ASSISTANT}"${exportSelectionState.roleFilter === TOOLKIT_EXPORT_ROLE_ASSISTANT ? " selected" : ""}>${t("exportSelection.roleAssistant")}</option>
+            <option value="${TOOLKIT_EXPORT_ROLE_ALL}"${exportSelectionState.roleFilter === TOOLKIT_EXPORT_ROLE_ALL ? " selected" : ""}>${tHtml("exportSelection.roleAll")}</option>
+            <option value="${TOOLKIT_EXPORT_ROLE_ASSISTANT}"${exportSelectionState.roleFilter === TOOLKIT_EXPORT_ROLE_ASSISTANT ? " selected" : ""}>${tHtml("exportSelection.roleAssistant")}</option>
           </select>
         </label>
         <label class="chatgpt-toolkit-form-group">
-          <span class="chatgpt-toolkit-form-label">${t("exportSelection.formatLabel")}</span>
+          <span class="chatgpt-toolkit-form-label">${tHtml("exportSelection.formatLabel")}</span>
           <select class="chatgpt-toolkit-input" data-export-selection-field="format">
             <option value="${TOOLKIT_EXPORT_FORMAT_JSON}"${exportSelectionState.format === TOOLKIT_EXPORT_FORMAT_JSON ? " selected" : ""}>.json</option>
             <option value="${TOOLKIT_EXPORT_FORMAT_TEXT}"${exportSelectionState.format === TOOLKIT_EXPORT_FORMAT_TEXT ? " selected" : ""}>.txt</option>
@@ -248,11 +364,13 @@ const renderExportSelectionModal = () => {
         </label>
       </div>
       ${turnSection}
+      <div data-export-selection-progress role="status" aria-live="polite" hidden></div>
+      <div data-export-selection-elapsed></div>
       <div class="chatgpt-toolkit-prompt-footer">
-        <span data-export-selection-result-count>${t("exportSelection.resultCount", { turns: resultPreview?.selectedTurnCount || 0, messages: messageCount })}</span>
+        <span data-export-selection-result-count>${tHtml("exportSelection.resultCount", { turns: resultPreview?.selectedTurnCount || 0, messages: messageCount })}</span>
         <div class="chatgpt-toolkit-prompt-footer-actions">
-          <button type="button" data-export-selection-action="close">${t("exportSelection.cancel")}</button>
-          <button type="button" data-export-selection-action="export" data-export-selection-export-button ${messageCount <= 0 ? "disabled" : ""}>${t("exportSelection.export")}</button>
+          <button type="button" data-export-selection-action="close">${tHtml("exportSelection.cancel")}</button>
+          <button type="button" data-export-selection-action="export" data-export-selection-export-button ${messageCount <= 0 ? "disabled" : ""}>${tHtml("exportSelection.export")}</button>
         </div>
       </div>
     </div>
@@ -305,7 +423,7 @@ const updateExportSelectionInteractiveUi = () => {
   }
   const exportButton = modal.querySelector("[data-export-selection-export-button]");
   if (exportButton instanceof HTMLButtonElement) {
-    exportButton.disabled = messageCount <= 0;
+    exportButton.disabled = exportInProgress || messageCount <= 0;
   }
   syncExportSelectionVisibleTurns();
 };
@@ -361,20 +479,57 @@ const setExportSelectionTurnChecked = (turnIndex, checked, extendRange = false) 
   exportSelectionState.lastSelectedTurnIndex = turnIndex;
 };
 
-const loadExportSelectionData = async () => {
+const loadExportSelectionData = async (options = {}) => {
+  exportSelectionState.preparationController?.abort();
+  const controller = new AbortController();
+  exportSelectionState.preparationController = controller;
   const token = exportSelectionState.loadToken + 1;
   exportSelectionState.loadToken = token;
   exportSelectionState.loading = true;
   exportSelectionState.error = null;
+  exportSelectionState.requiresPartialConsent = false;
+  exportSelectionState.consentError = null;
+  exportSelectionState.cacheNotice = null;
   renderExportSelectionModal();
 
   try {
-    const preparedExport = await prepareConversationExportPayload({ updateStatus: false });
+    if (options.clearAccessBlock) {
+      if (typeof clearConversationAccessBlock === "function") {
+        // The retry button is an explicit user action, so it also lifts a 403 stop.
+        clearConversationAccessBlock();
+      }
+      if (typeof getExportApiAccessToken === "function") {
+        // A stale or refused login token is the other half of the 403 story.
+        await getExportApiAccessToken({ forceRefresh: true }).catch(() => null);
+      }
+    }
+    const preparedExport = await prepareConversationExportPayload({
+      updateStatus: false,
+      signal: controller.signal,
+      allowPartial: options.allowPartial === true,
+    });
     if (!exportSelectionState.isOpen || token !== exportSelectionState.loadToken) {
       return;
     }
     exportSelectionState.preparedExport = preparedExport;
+    if (!preparedExport?.payload) {
+      exportSelectionState.loading = false;
+      exportSelectionState.requiresPartialConsent = true;
+      exportSelectionState.consentError = preparedExport?.apiError || null;
+      updateStatusByKey("status.exportNeedsConsent", "warn", {
+        reason: getExportApiErrorText(exportSelectionState.consentError),
+      });
+      renderExportSelectionModal();
+      return;
+    }
     exportSelectionState.turns = groupExportMessagesIntoTurns(preparedExport.payload.messages);
+    if (preparedExport.fromCache) {
+      exportSelectionState.cacheNotice = {
+        updatedAt: preparedExport.payload.indexUpdatedAt || 0,
+        indexStatus: preparedExport.payload.indexStatus || "",
+        completeness: preparedExport.payload.completeness || "complete",
+      };
+    }
     exportSelectionState.loading = false;
     updateStatusByKey("status.exportSelectionReady", "success", {
       count: exportSelectionState.turns.length,
@@ -386,10 +541,49 @@ const loadExportSelectionData = async () => {
     exportSelectionState.loading = false;
     exportSelectionState.error = normalizeExportApiError(error, "Export preparation failed.");
     updateStatusByKey("status.exportFailed", "warn", {
-      reason: exportSelectionState.error.message,
+      reason: getExportApiErrorText(exportSelectionState.error),
     });
   }
   renderExportSelectionModal();
+};
+
+const runExportSelectionExport = async () => {
+  if (exportInProgress) return;
+  exportSelectionImageProgress = null;
+  exportSelectionProgressStarted = Date.now();
+  clearInterval(exportSelectionProgressTimer);
+  exportSelectionProgressTimer = setInterval(() => {
+    const elapsed = getExportSelectionModal()?.querySelector("[data-export-selection-elapsed]");
+    if (elapsed) {
+      const progress = exportSelectionImageProgress;
+      let estimate = "";
+      if (progress) {
+        estimate = progress.completed > 0
+          ? t("exportImages.estimate", { seconds: Math.max(1, Math.ceil((progress.remainingMs - (Date.now() - progress.estimateAt)) / 1000)) })
+          : t("exportImages.estimating");
+      }
+      elapsed.textContent = t("exportImages.elapsed", { seconds: Math.floor((Date.now() - exportSelectionProgressStarted) / 1000) }) + " " + estimate;
+    }
+  }, 1000);
+  const config = {
+    exportFormat: exportSelectionState.format,
+    exportRole: exportSelectionState.roleFilter,
+    exportImages: exportSelectionState.includeImages,
+  };
+  if (typeof saveToolkitConfig === "function") {
+    saveToolkitConfig(config);
+  }
+  const payload = await exportMessages({
+    preparedExport: exportSelectionState.preparedExport,
+    scope: exportSelectionState.scope,
+    selectedTurnIds: Array.from(exportSelectionState.selectedTurnIds),
+    roleFilter: exportSelectionState.roleFilter,
+    format: exportSelectionState.format,
+    includeImages: exportSelectionState.includeImages,
+  });
+  if (payload) {
+    closeExportSelectionModal();
+  }
 };
 
 const handleExportSelectionAction = async (action) => {
@@ -398,7 +592,15 @@ const handleExportSelectionAction = async (action) => {
     return;
   }
   if (action === "retry") {
-    await loadExportSelectionData();
+    await loadExportSelectionData({ clearAccessBlock: true });
+    return;
+  }
+  if (action === "export-loaded") {
+    // Explicit consent: only now may the currently loaded page be exported.
+    await loadExportSelectionData({ allowPartial: true });
+    if (exportSelectionState.preparedExport?.payload && !exportSelectionState.error) {
+      await runExportSelectionExport();
+    }
     return;
   }
   if (action === "select-all") {
@@ -420,23 +622,7 @@ const handleExportSelectionAction = async (action) => {
     renderExportSelectionPage();
     return;
   } else if (action === "export") {
-    const config = {
-      exportFormat: exportSelectionState.format,
-      exportRole: exportSelectionState.roleFilter,
-    };
-    if (typeof saveToolkitConfig === "function") {
-      saveToolkitConfig(config);
-    }
-    const payload = await exportMessages({
-      preparedExport: exportSelectionState.preparedExport,
-      scope: exportSelectionState.scope,
-      selectedTurnIds: Array.from(exportSelectionState.selectedTurnIds),
-      roleFilter: exportSelectionState.roleFilter,
-      format: exportSelectionState.format,
-    });
-    if (payload) {
-      closeExportSelectionModal();
-    }
+    await runExportSelectionExport();
     return;
   }
   updateExportSelectionInteractiveUi();
@@ -471,10 +657,11 @@ const ensureExportSelectionModal = () => {
 
     modal.addEventListener("change", (event) => {
       const target = event.target;
-      if (!(target instanceof HTMLSelectElement)) {
+      if (!(target instanceof HTMLSelectElement) && !(target instanceof HTMLInputElement)) {
         return;
       }
       const field = target.dataset.exportSelectionField;
+      if (field === "images") exportSelectionState.includeImages = target.value === "true";
       if (field === "scope") {
         exportSelectionState.scope = target.value === EXPORT_SCOPE_SELECTED
           ? EXPORT_SCOPE_SELECTED

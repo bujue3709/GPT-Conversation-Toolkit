@@ -1,0 +1,7 @@
+node_modules/
+output/
+.playwright-cli/
+*.zip
+
+.claude/
+REGRESSION-NOTES-draft.md

@@ -355,6 +355,11 @@ const createPngTableUnit = (context, block, contentWidth) => {
 };
 
 const createPngRenderUnit = (context, block, contentWidth) => {
+  if (block.kind === "image") {
+    const scale = Math.min(1, contentWidth / block.image.width,
+      (PNG_EXPORT_PAGE_CAPACITY - PNG_EXPORT_CARD_OVERHEAD) / block.image.height);
+    return { type: "image", image: block.image, width: block.image.width * scale, height: block.image.height * scale };
+  }
   if (block.kind === "rule") {
     return { ...block, type: "rule", height: 18 };
   }
@@ -374,8 +379,27 @@ const getPngMessageMarkdown = (payload, message) =>
 
 const buildPngMessageModel = (context, payload, message) => {
   const contentWidth = PNG_EXPORT_CONTENT_WIDTH - PNG_EXPORT_CARD_PADDING_X * 2;
-  const blocks = parsePngMarkdownBlocks(getPngMessageMarkdown(payload, message));
+  const blocks = [];
+  const appendImage = (image) => {
+    if (!payload.includeImages) blocks.push({ kind: "paragraph", text: `[Image${image?.name ? `: ${image.name}` : ""}]` });
+    else if (image?.preview === "available") blocks.push({ kind: "image", image });
+    else blocks.push({ kind: "paragraph", text: `[Image${image?.name ? `: ${image.name}` : ""}${image?.path ? ` — ${image.path}` : " — unavailable"}]` });
+  };
+  if (message.images?.length) {
+    if (message.content?.length) {
+      message.content.forEach((part) => {
+        if (part.type === "image") appendImage(message.images.find((image) => image.id === part.imageId));
+        else blocks.push(...parsePngMarkdownBlocks(part.text || ""));
+      });
+    } else {
+      blocks.push(...parsePngMarkdownBlocks(getPngMessageMarkdown(payload, message)));
+      message.images.forEach(appendImage);
+    }
+  } else blocks.push(...parsePngMarkdownBlocks(getPngMessageMarkdown(payload, message)));
   (message?.attachments || []).forEach((attachment) => {
+    if (message.images?.length && /^image\//.test(attachment.mimeType || "")) return;
+    if (message.images?.some((image) =>
+      (image.source || "").replace(/^(sediment|file-service):\/\//, "") === String(attachment.id || "").replace(/^(sediment|file-service):\/\//, ""))) return;
     blocks.push({
       kind: "paragraph",
       text: `[Image${attachment?.name ? `: ${attachment.name}` : ""}]`,
@@ -745,7 +769,9 @@ const drawPngTableUnit = (context, unit, x, y) => {
 };
 
 const drawPngRenderUnit = (context, unit, x, y, width) => {
-  if (unit.type === "rule") {
+  if (unit.type === "image") {
+    context.__toolkitImageJobs.push({ image: unit.image, x, y, width: unit.width, height: unit.height });
+  } else if (unit.type === "rule") {
     context.fillStyle = "#d8dce2";
     context.fillRect(x, y + 8, width, 2);
   } else if (unit.type === "code") {
@@ -848,7 +874,7 @@ const drawPngWatermark = (context, pageHeight, parts = getPngWatermarkParts()) =
   context.fillText(parts.suffix, cursorX, y);
 };
 
-const renderPngPageToBlob = (payload, page, pageIndex, pageCount, watermarkParts) => {
+const renderPngPageToBlob = async (payload, page, pageIndex, pageCount, watermarkParts, options = {}) => {
   const pageHeight = Math.min(
     PNG_EXPORT_MAX_HEIGHT,
     Math.max(
@@ -866,61 +892,89 @@ const renderPngPageToBlob = (payload, page, pageIndex, pageCount, watermarkParts
     throw new PngExportError("PNG_RENDER_FAILED", "Canvas 2D rendering is unavailable.");
   }
 
-  context.textBaseline = "top";
-  context.fillStyle = "#ffffff";
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  context.fillStyle = "#111827";
-  setPngFont(context, { size: 32, weight: 750 });
-  context.fillText(
-    truncatePngTitle(context, payload?.title, PNG_EXPORT_CONTENT_WIDTH - 180),
-    PNG_EXPORT_SIDE_PADDING,
-    PNG_EXPORT_TOP_PADDING,
-  );
-  context.textAlign = "right";
-  context.fillStyle = "#6b7280";
-  setPngFont(context, { size: 18, weight: 600 });
-  context.fillText(
-    pageCount > 1 ? `${pageIndex + 1} / ${pageCount}` : "ChatGPT",
-    PNG_EXPORT_WIDTH - PNG_EXPORT_SIDE_PADDING,
-    PNG_EXPORT_TOP_PADDING + 8,
-  );
-  context.textAlign = "left";
-  context.fillStyle = "#e5e7eb";
-  context.fillRect(PNG_EXPORT_SIDE_PADDING, PNG_EXPORT_CONTENT_TOP - 28, PNG_EXPORT_CONTENT_WIDTH, 2);
-
-  let cursorY = PNG_EXPORT_CONTENT_TOP;
-  page.items.forEach((item, index) => {
-    if (index > 0) {
-      cursorY += PNG_EXPORT_MESSAGE_GAP;
-    }
-    drawPngMessageFragment(
-      context,
-      item,
+  context.__toolkitImageJobs = [];
+  try {
+    context.textBaseline = "top";
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "#111827";
+    setPngFont(context, { size: 32, weight: 750 });
+    context.fillText(
+      truncatePngTitle(context, payload?.title, PNG_EXPORT_CONTENT_WIDTH - 180),
       PNG_EXPORT_SIDE_PADDING,
-      cursorY,
-      PNG_EXPORT_CONTENT_WIDTH,
+      PNG_EXPORT_TOP_PADDING,
     );
-    cursorY += item.height;
-  });
-  drawPngWatermark(context, pageHeight, watermarkParts);
+    context.textAlign = "right";
+    context.fillStyle = "#6b7280";
+    setPngFont(context, { size: 18, weight: 600 });
+    context.fillText(
+      pageCount > 1 ? `${pageIndex + 1} / ${pageCount}` : "ChatGPT",
+      PNG_EXPORT_WIDTH - PNG_EXPORT_SIDE_PADDING,
+      PNG_EXPORT_TOP_PADDING + 8,
+    );
+    context.textAlign = "left";
+    context.fillStyle = "#e5e7eb";
+    context.fillRect(PNG_EXPORT_SIDE_PADDING, PNG_EXPORT_CONTENT_TOP - 28, PNG_EXPORT_CONTENT_WIDTH, 2);
 
-  return new Promise((resolve, reject) => {
-    try {
-      canvas.toBlob((blob) => {
+    let cursorY = PNG_EXPORT_CONTENT_TOP;
+    page.items.forEach((item, index) => {
+      if (index > 0) {
+        cursorY += PNG_EXPORT_MESSAGE_GAP;
+      }
+      drawPngMessageFragment(
+        context,
+        item,
+        PNG_EXPORT_SIDE_PADDING,
+        cursorY,
+        PNG_EXPORT_CONTENT_WIDTH,
+      );
+      cursorY += item.height;
+    });
+    drawPngWatermark(context, pageHeight, watermarkParts);
+
+    for (const job of context.__toolkitImageJobs) {
+      options.signal?.throwIfAborted();
+      let bitmap;
+      try {
+        const blob = await payload.__imageStore.get(job.image.path.slice("images/".length));
+        bitmap = await createImageBitmap(blob, {
+          resizeWidth: Math.max(1, Math.round(job.width)),
+          resizeHeight: Math.max(1, Math.round(job.height)),
+          resizeQuality: "high",
+        });
+        options.signal?.throwIfAborted();
+        context.drawImage(bitmap, job.x, job.y, job.width, job.height);
+      } catch (error) {
+        if (options.signal?.aborted) throw error;
+        job.image.preview = "decode-failed";
+        context.fillStyle = "#6b7280";
+        setPngFont(context, { size: 20 });
+        context.fillText(`[Image preview unavailable: ${job.image.path}]`, job.x, job.y);
+      } finally { bitmap?.close(); }
+    }
+
+    return await new Promise((resolve, reject) => {
+      try {
+        canvas.toBlob((blob) => {
+          canvas.width = 0;
+          canvas.height = 0;
+          if (!blob) {
+            reject(new PngExportError("PNG_RENDER_FAILED", `PNG page ${pageIndex + 1} could not be encoded.`));
+            return;
+          }
+          resolve(blob);
+        }, "image/png");
+      } catch (error) {
         canvas.width = 0;
         canvas.height = 0;
-        if (!blob) {
-          reject(new PngExportError("PNG_RENDER_FAILED", `PNG page ${pageIndex + 1} could not be encoded.`));
-          return;
-        }
-        resolve(blob);
-      }, "image/png");
-    } catch (error) {
-      canvas.width = 0;
-      canvas.height = 0;
-      reject(new PngExportError("PNG_RENDER_FAILED", `PNG page ${pageIndex + 1} could not be rendered.`, error));
-    }
-  });
+        reject(new PngExportError("PNG_RENDER_FAILED", `PNG page ${pageIndex + 1} could not be rendered.`, error));
+      }
+    });
+  } finally {
+    context.__toolkitImageJobs = [];
+    canvas.width = 0;
+    canvas.height = 0;
+  }
 };
 
 const buildConversationPngFilename = (payload, pageIndex, pageCount, baseFilename = "") => {
@@ -975,27 +1029,44 @@ const exportConversationPng = async (payload, options = {}) => {
 
   const baseFilename = buildConversationExportFilename(payload, "png");
   const watermarkParts = getPngWatermarkParts();
-  for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
-    if (pages.length > 1) {
-      updateStatusByKey("status.pngGeneratingPage", "info", {
-        current: pageIndex + 1,
-        total: pages.length,
-      });
+  let zip;
+  try {
+    if (pages.length > 1 && !options.onPage) {
+      const sink = await createExportArchiveSink(buildConversationExportFilename(payload, "zip"));
+      zip = createExportZipWriter(sink, options.signal);
     }
-    const blob = await renderPngPageToBlob(
-      payload,
-      pages[pageIndex],
-      pageIndex,
-      pages.length,
-      watermarkParts,
-    );
-    downloadPngBlob(
-      blob,
-      buildConversationPngFilename(payload, pageIndex, pages.length, baseFilename),
-    );
-    if (pageIndex + 1 < pages.length) {
-      await yieldPngExportThread();
+    for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
+      options.signal?.throwIfAborted();
+      if (pages.length > 1) {
+        updateStatusByKey("status.pngGeneratingPage", "info", {
+          current: pageIndex + 1,
+          total: pages.length,
+        });
+      }
+      const blob = await renderPngPageToBlob(
+        payload,
+        pages[pageIndex],
+        pageIndex,
+        pages.length,
+        watermarkParts,
+        options,
+      );
+      options.signal?.throwIfAborted();
+      if (options.onPage) await options.onPage(blob, pageIndex);
+      else if (zip) await zip.add(`pages/conversation-${String(pageIndex + 1).padStart(3, "0")}.png`, blob);
+      else downloadPngBlob(
+        blob,
+        buildConversationPngFilename(payload, pageIndex, pages.length, baseFilename),
+      );
+      if (pageIndex + 1 < pages.length) {
+        await yieldPngExportThread();
+      }
     }
+    options.signal?.throwIfAborted();
+    if (zip) await zip.close();
+  } catch (error) {
+    await zip?.abort().catch(() => {});
+    throw error;
   }
 
   if (options.usedFallback) {
