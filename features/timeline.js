@@ -588,13 +588,13 @@ const markTimelineRefreshPending = () => {
   timelineState.refreshPending = true;
 };
 
-const updateTimelineBubblePlacement = () => {
+const updateTimelineBubblePlacement = (options = {}) => {
   const elements = getTimelineElements();
   const timeline = elements?.timeline;
   if (!(timeline instanceof HTMLElement)) {
     return;
   }
-  if (isTimelineInteractionLocked()) {
+  if (isTimelineInteractionLocked() && options.force !== true) {
     return;
   }
 
@@ -664,8 +664,8 @@ const showTimelineHint = (message, options = {}) => {
     }, { once: true });
     hint.appendChild(button);
   }
-  updateTimelineBubblePlacement();
   hint.classList.add("is-visible");
+  updateTimelineBubblePlacement({ force: true });
   if (settings.persistent) {
     return;
   }

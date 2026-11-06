@@ -837,10 +837,12 @@
 
 .chatgpt-toolkit-timeline-hint.has-action {
   pointer-events: auto;
-  display: inline-flex;
+  display: flex;
+  width: max-content;
+  max-width: min(300px, calc(100vw - 32px));
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  max-width: 300px;
   white-space: normal;
 }
 

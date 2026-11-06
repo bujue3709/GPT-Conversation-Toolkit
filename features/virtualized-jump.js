@@ -564,6 +564,41 @@ const resolveMessageNodeByPreviewText = (target, options = {}) => {
 
 const resolveByPreviewText = resolveMessageNodeByPreviewText;
 
+const resolveMessageNodeByExactPreviewText = (target) => {
+  const targetNeedle = normalizeVirtualJumpText(getVirtualJumpTargetText(target))
+    .slice(0, VIRTUAL_JUMP_TEXT_NEEDLE_LIMIT)
+    .toLowerCase();
+  if (targetNeedle.length < 48) {
+    return null;
+  }
+
+  const targetRole = getVirtualJumpTargetRole(target);
+  const nodes = typeof getMessageNodes === "function" ? getMessageNodes({ forceRefresh: true }) : [];
+  const matches = nodes.filter((node) => {
+    if (!(node instanceof HTMLElement) || !node.isConnected) {
+      return false;
+    }
+    if (targetRole && getVirtualJumpDomRole(node) !== targetRole) {
+      return false;
+    }
+    return getVirtualJumpDomText(node).toLowerCase().includes(targetNeedle);
+  });
+
+  // Only use text when a long preview identifies exactly one mounted message.
+  return matches.length === 1 ? matches[0] : null;
+};
+
+const isExactVirtualJumpPreviewMatch = (node, target) => {
+  const targetNeedle = normalizeVirtualJumpText(getVirtualJumpTargetText(target))
+    .slice(0, VIRTUAL_JUMP_TEXT_NEEDLE_LIMIT)
+    .toLowerCase();
+  const targetRole = getVirtualJumpTargetRole(target);
+  if (targetNeedle.length < 48 || (targetRole && getVirtualJumpDomRole(node) !== targetRole)) {
+    return false;
+  }
+  return getVirtualJumpDomText(node).toLowerCase().includes(targetNeedle);
+};
+
 const isVirtualJumpNodeRoleCompatible = (node, target) => {
   const targetRole = getVirtualJumpTargetRole(target);
   if (!targetRole) {
@@ -1170,6 +1205,15 @@ const jumpToConversationMessage = async (target, options = {}) => {
     if (!isActive() || !(node instanceof HTMLElement) || !node.isConnected) {
       return false;
     }
+    const allowExactTextFallback = metadata.allowExactTextFallback === true;
+    const resolutionMetadata = { ...metadata };
+    delete resolutionMetadata.allowExactTextFallback;
+    const targetMatches = () =>
+      isDomNodeLikelyJumpTarget(node, normalizedTarget, { allowWeak: false }) ||
+      (allowExactTextFallback && isExactVirtualJumpPreviewMatch(node, normalizedTarget));
+    if (!targetMatches()) {
+      return false;
+    }
     if (typeof scrollElementIntoConversationView === "function") {
       scrollElementIntoConversationView(node, {
         behavior: options.finalBehavior || "auto",
@@ -1179,13 +1223,13 @@ const jumpToConversationMessage = async (target, options = {}) => {
       node.scrollIntoView({ behavior: options.finalBehavior || "auto", block: options.block || "center" });
     }
     await nextVirtualJumpFrame();
-    if (!isActive() || !isVirtualJumpNodeCentered(node) || !isDomNodeLikelyJumpTarget(node, normalizedTarget, { allowWeak: false })) {
+    if (!isActive() || !isVirtualJumpNodeCentered(node) || !targetMatches()) {
       return false;
     }
     options.onResolved?.(node, {
       method,
       target: normalizedTarget,
-      ...metadata,
+      ...resolutionMetadata,
     });
     return true;
   };
@@ -1266,7 +1310,33 @@ const jumpToConversationMessage = async (target, options = {}) => {
 
     let direction = 0;
     let targetInsideRenderedWindow = false;
-    if (
+    const userOrder = getVirtualJumpTargetUserOrder(normalizedTarget);
+    const hasRenderedUserOrderRange =
+      Number.isFinite(userOrder) &&
+      Number.isFinite(renderedWindow.minUserOrder) &&
+      Number.isFinite(renderedWindow.maxUserOrder);
+
+    // The timeline counts user turns, while message indexes include assistant
+    // replies. Prefer the user-turn range when the rendered window exposes it.
+    if (hasRenderedUserOrderRange) {
+      if (userOrder < renderedWindow.minUserOrder) {
+        direction = -1;
+      } else if (userOrder > renderedWindow.maxUserOrder) {
+        direction = 1;
+      } else {
+        targetInsideRenderedWindow = true;
+        const exactPreviewNode = resolveMessageNodeByExactPreviewText(normalizedTarget);
+        if (await resolveAndFinish(exactPreviewNode, "exact-preview", {
+          attempt,
+          renderedWindow,
+          allowExactTextFallback: true,
+        })) {
+          return { ok: true, node: exactPreviewNode, reason: "resolved-by-exact-preview" };
+        }
+      }
+    }
+
+    if (!hasRenderedUserOrderRange &&
       Number.isFinite(targetIndex) &&
       Number.isFinite(renderedWindow.minIndex) &&
       Number.isFinite(renderedWindow.maxIndex)
@@ -1280,21 +1350,6 @@ const jumpToConversationMessage = async (target, options = {}) => {
         const weakNode = resolveByPreviewText(normalizedTarget, { threshold: 0.62 });
         if (await resolveAndFinish(weakNode, "weak-match", { attempt, renderedWindow })) {
           return { ok: true, node: weakNode, reason: "resolved-by-preview" };
-        }
-      }
-    }
-
-    if (direction === 0) {
-      const userOrder = getVirtualJumpTargetUserOrder(normalizedTarget);
-      if (
-        Number.isFinite(userOrder) &&
-        Number.isFinite(renderedWindow.minUserOrder) &&
-        Number.isFinite(renderedWindow.maxUserOrder)
-      ) {
-        if (userOrder < renderedWindow.minUserOrder) {
-          direction = -1;
-        } else if (userOrder > renderedWindow.maxUserOrder) {
-          direction = 1;
         }
       }
     }
