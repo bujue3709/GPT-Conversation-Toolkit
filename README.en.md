@@ -6,15 +6,13 @@ A browser extension for `ChatGPT Web` focused on full-session export, in-page se
 
 Current active maintainer: `bujue3709` (primary / sole active maintainer)
 
-Current version: `v1.4.5`
+Current version: `v1.4.6`
 
-## What's New in v1.4.5 (2026-10-14)
+## What's New in v1.4.6 (2026-11-09)
 
-- Fixed conversations failing to drag into folders in the updated ChatGPT sidebar.
-- Restored conversation reordering within folders, including drops on conversation rows and adjacent gaps.
-- Resolved conflicts with native sidebar dragging while preserving menus, rename inputs, and right-click interactions.
-
-The maintainer recently underwent surgery and has only now had time to review and address issues. Thank you for your patience.
+- Improved long-conversation browsing and export.
+- Chat exports can now package images from the selected messages for offline viewing.
+- Export progress is visible and can be cancelled; multi-page PNG downloads are combined automatically.
 
 ## ChatGPT Virtualized List Impact (Important)
 
@@ -28,15 +26,6 @@ Impact on this extension:
 - Search and timeline data prefer the API conversation data, so they can cover more of the full conversation.
 - Search and timeline jumps use a unified virtualized-jump flow: locate the target message, wait for ChatGPT to mount the target DOM, then confirm the node by message ID or preview text.
 - The old long-conversation cleanup / collapse feature is deprecated. ChatGPT Web's own virtualized list already unmounts messages far outside the viewport, so the extension no longer needs to hide older messages. Extra collapsing can interfere with search, timeline positioning, and native page behavior.
-
-## Long conversations and export improvements (preview) 🛡️
-
-- Long-conversation handling and export performance are improved; exports can now package images from the selected messages.
-- Timeline, search and export share a conversation index. Virtualized DOM windows do not discard known history; extension storage can restore a cached branch after a reload, with its timestamp shown.
-- The conversation ID in the URL owns route identity. Distant jumps wait for the target to mount and confirm its message ID; failures offer a retry.
-- Reads try the current site's plain endpoint first, then a bounded set of compatible endpoints. Explicit challenges stop requests immediately; 429 uses the server's cooldown. Cached data remains usable after a failure. A DOM-only export requires an explicit choice to export the loaded part.
-- Image downloads are optional and off by default. The ZIP contains the selected format, originals and an integrity manifest. Progress includes elapsed time and an approximate remaining download time. Single-page PNG downloads directly; multiple PNG pages download as one ZIP.
-- Closing the export dialog cancels the job. The underlying conversation read stops when its last subscriber cancels. Search uses Range highlights without replacing message text nodes.
 
 See [reliability notes](./docs/reliability.md) for diagnostics and validation boundaries, and [image export](./docs/image-export.md) for format and resource limits.
 
